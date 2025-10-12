@@ -23,6 +23,10 @@ except ImportError:
     print("WARNING: Rerun not installed. Visualization will not work.")
 
 
+# 机器人操作环境 配置信息
+# robot_state = Position(3D)+ rotation (6D)+ gripper open/close(1D)
+# 5 cameras: right_shoulder, left_shoulder, overhead, front, wrist
+# each camera captures 128x128x3 RGB image and point cloud
 class RLBenchEnv(BaseEnv):
     """
     DT = 0.05 (50ms/20Hz)
