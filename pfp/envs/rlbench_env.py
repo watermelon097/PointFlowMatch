@@ -52,9 +52,9 @@ class RLBenchEnv(BaseEnv):
         self.use_pc_color = use_pc_color
         camera_config = CameraConfig(
             rgb=True,
-            depth=False,
+            depth=True,
             mask=False,
-            point_cloud=True,
+            point_cloud=False,
             image_size=(128, 128),
             render_mode=RenderMode.OPENGL,
         )
@@ -74,7 +74,7 @@ class RLBenchEnv(BaseEnv):
         self.env = Environment(
             action_mode,
             obs_config=obs_config,
-            headless=headless,
+            headless=headless, # True: no visualization, False: visualization
         )
         self.env.launch()
         self.task = self.env.get_task(name_to_task_class(task_name))
@@ -83,7 +83,7 @@ class RLBenchEnv(BaseEnv):
             min_bound=(self.robot_position[0] + 0.1, -0.65, self.robot_position[2] - 0.05),
             max_bound=(1, 0.65, 2),
         )
-        self.vis = vis
+        self.vis = vis #True use RerunViewer to visualize the environment, False: no visualization
         self.last_obs = None
         if self.vis:
             RV.add_axis("vis/origin", np.eye(4), size=0.01, timeless=True)
@@ -173,6 +173,18 @@ class RLBenchEnv(BaseEnv):
             )
         )
         return images
+    
+    def get_depths(self, obs: Observation) -> np.ndarray:
+        depths = np.stack(
+            (
+                obs.right_shoulder_depth,
+                obs.left_shoulder_depth,
+                obs.overhead_depth,
+                obs.front_depth,
+                obs.wrist_depth,
+            )
+        )
+        return depths
 
     def vis_step(self, robot_state: np.ndarray, obs: np.ndarray, prediction: np.ndarray = None):
         """

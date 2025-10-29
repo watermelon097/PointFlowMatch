@@ -47,6 +47,62 @@ class RobotDatasetImages(torch.utils.data.Dataset):
         return images, robot_state_obs, robot_state_pred
 
 
+class RobotDatasetRGBD(torch.utils.data.Dataset):
+    """
+    PyTorch dataset for RGB-D image-based robot manipulation sequences.
+    
+    Returns:
+        images: (T_obs, 5, 128, 128, 3) - RGB images from 5 cameras
+        depths: (T_obs, 5, 128, 128) - Depth images from 5 cameras
+        robot_state_obs: (T_obs, 10) - Observed robot states
+        robot_state_pred: (T_pred, 10) - Future robot states to predict
+    """
+    def __init__(
+        self,
+        data_path: str,
+        n_obs_steps: int,
+        n_pred_steps: int,
+        subs_factor: int = 1,  # 1 means no subsampling
+    ) -> None:
+        replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
+        data_keys = ["robot_state", "images", "depths"]
+        data_key_first_k = {
+            "images": n_obs_steps * subs_factor,
+            "depths": n_obs_steps * subs_factor,
+        }
+        self.sampler = SequenceSampler(
+            replay_buffer=replay_buffer,
+            sequence_length=(n_obs_steps + n_pred_steps) * subs_factor - (subs_factor - 1),
+            pad_before=(n_obs_steps - 1) * subs_factor,
+            pad_after=(n_pred_steps - 1) * subs_factor + (subs_factor - 1),
+            keys=data_keys,
+            key_first_k=data_key_first_k,
+        )
+        self.n_obs_steps = n_obs_steps
+        self.n_prediction_steps = n_pred_steps
+        self.subs_factor = subs_factor
+        return
+
+    def __len__(self) -> int:
+        return len(self.sampler)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
+        """
+        Returns:
+            images: (T_obs, 5, 128, 128, 3) - RGB images
+            depths: (T_obs, 5, 128, 128) - Depth images
+            robot_state_obs: (T_obs, 10)
+            robot_state_pred: (T_pred, 10)
+        """
+        sample: dict[str, np.ndarray] = self.sampler.sample_sequence(idx)
+        cur_step_i = self.n_obs_steps * self.subs_factor
+        
+        images = sample["images"][: cur_step_i : self.subs_factor]     # (T_obs, 5, 128, 128, 3)
+        depths = sample["depths"][: cur_step_i : self.subs_factor]     # (T_obs, 5, 128, 128)
+        robot_state_obs = sample["robot_state"][: cur_step_i : self.subs_factor]
+        robot_state_pred = sample["robot_state"][cur_step_i :: self.subs_factor]
+        
+        return images, depths, robot_state_obs, robot_state_pred
 if __name__ == "__main__":
     dataset = RobotDatasetImages(
         data_path=DATA_DIRS.PFP / "open_fridge" / "train",
