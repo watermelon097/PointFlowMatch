@@ -44,8 +44,8 @@ class FMPolicy(ComposerModel, BasePolicy):
         self.pos_emb_scale = pos_emb_scale
         self.num_k_infer = num_k_infer
         self.time_conditioning = time_conditioning
-        self.obs_encoder = obs_encoder
-        self.diffusion_net = diffusion_net
+        self.obs_encoder = obs_encoder # pcd encoder
+        self.diffusion_net = diffusion_net # velocity predictor
         self.norm_pcd_center = norm_pcd_center
         self.augment_data = augment_data
         self.noise_type = noise_type

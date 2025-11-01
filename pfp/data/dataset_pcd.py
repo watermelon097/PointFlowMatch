@@ -78,6 +78,7 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
             n_points: Maximum number of points to sample from point cloud
             subs_factor: Temporal subsampling factor (1 = no subsampling)
         """
+
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
         data_keys = ["robot_state", "pcd_xyz"]
         data_key_first_k = {"pcd_xyz": n_obs_steps * subs_factor}
@@ -86,6 +87,11 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
             data_key_first_k["pcd_color"] = n_obs_steps * subs_factor
         self.sampler = SequenceSampler(
             replay_buffer=replay_buffer,
+            # sample N frames with interval subs_factor: [0, subs_factor, 2*subs_factor, ..., (N-1)*subs_factor]
+            # (N-1)*subs_factor =
+            # N *subs_factor - subs_factor + 1 = 
+            # N *subs_factor - (subs_factor - 1)
+
             sequence_length=(n_obs_steps + n_pred_steps) * subs_factor - (subs_factor - 1),
             pad_before=(n_obs_steps - 1) * subs_factor,
             pad_after=(n_pred_steps - 1) * subs_factor + (subs_factor - 1),
@@ -113,9 +119,12 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
             robot_state_pred: (T_pred, 10) - Future robot states to predict
         """
         sample: dict[str, np.ndarray] = self.sampler.sample_sequence(idx)
+        # based on curr setting, cur_step_i = 6
         cur_step_i = self.n_obs_steps * self.subs_factor
         
         # Extract point clouds: (T_obs, N, 3)
+        # current subs_factor=3, 
+        # shape of pcd = (2, N_points, 3)
         pcd = sample["pcd_xyz"][: cur_step_i : self.subs_factor]
         
         # Optionally concatenate RGB colors: (T_obs, N, 6)

@@ -20,6 +20,7 @@ from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from pfp import DEVICE, DATA_DIRS, set_seeds
 from pfp.data.dataset_pcd import RobotDatasetPcd
 from pfp.data.dataset_images import RobotDatasetImages
+from pfp.data.dataset_images import RobotDatasetRGBD
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="train")
@@ -136,6 +137,9 @@ def main(cfg: OmegaConf):
     elif cfg.obs_mode == "rgb":
         dataset_train = RobotDatasetImages(data_path_train, **cfg.dataset)
         dataset_valid = RobotDatasetImages(data_path_valid, **cfg.dataset)
+    elif cfg.obs_mode == "rgbd":
+        dataset_train = RobotDatasetRGBD(data_path_train, **cfg.dataset)
+        dataset_valid = RobotDatasetRGBD(data_path_valid, **cfg.dataset)
     else:
         raise ValueError(f"Unknown observation mode: {cfg.obs_mode}")
     dataloader_train = DataLoader(
