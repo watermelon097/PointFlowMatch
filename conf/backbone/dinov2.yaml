@@ -1,0 +1,4 @@
+__target__: pfp.backbones.dinov2_backbone.DINOv2Backbone
+model_name: dinov2_vitl14
+pretrained: true
+ckpt_path: /home/hjx/work/pfp/dinov2/dinov2_vitl14_pretrain.pth

@@ -51,3 +51,4 @@ lr_scheduler:
 defaults:
   - model: flow
   - backbone: pointnet
+  - backbone@image_encoder: dinov2
