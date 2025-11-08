@@ -142,7 +142,7 @@ class FMPolicy(ComposerModel, BasePolicy):
             batch = self._norm_data(batch)
             if self.augment_data:
                 batch = self._augment_data(batch)
-        pcd, robot_state_obs, robot_state_pred = batch
+        images, depths, robot_state_obs, robot_state_pred = batch
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
             pcd, robot_state_obs, robot_state_pred
         )

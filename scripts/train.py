@@ -131,6 +131,11 @@ def main(cfg: OmegaConf):
     #   * images: (T_obs, 5, 128, 128, 3) - images from 5 cameras
     #   * robot_state_obs: (T_obs, 10) - observed robot states
     #   * robot_state_pred: (T_pred, 10) - predicted robot states
+    # - RGBD mode: (images, depths, robot_state_obs, robot_state_pred)
+    #   * images: (T_obs, 5, 128, 128, 3) - images from 5 cameras
+    #   * depths: (T_obs, 5, 128, 128) - depth images from 5 cameras
+    #   * robot_state_obs: (T_obs, 10) - observed robot states
+    #   * robot_state_pred: (T_pred, 10) - predicted robot states
     if cfg.obs_mode == "pcd":
         dataset_train = RobotDatasetPcd(data_path_train, **cfg.dataset)
         dataset_valid = RobotDatasetPcd(data_path_valid, **cfg.dataset)
