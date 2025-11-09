@@ -12,29 +12,55 @@ def make_pcd(
     """
     Make a point cloud from xyz and rgb.
     Args:   
-        xyz: (N, 3) - Point cloud coordinates
-        rgb: (N, 3) - Point cloud colors
+        xyz: (H, W, 3) - Point cloud coordinates
+        rgb: (H, W, 3) - Point cloud colors
+        return_mapping: If True, also return a dict mapping point cloud indices to 2D pixel coordinates
     Returns:
-        pcd: (N, 3) - Point cloud
-        mapping: (N, 1) - Mapping from point cloud to image pixels
+        pcd: Point cloud object with H*W points
+        mapping: dict {pcd_index: (x, y)} - Dictionary mapping point cloud index to 2D pixel coordinates (only if return_mapping=True)
     """
+    H, W = xyz.shape[0], xyz.shape[1]
     points = o3d.utility.Vector3dVector(xyz.reshape(-1, 3))
     colors = o3d.utility.Vector3dVector(rgb.reshape(-1, 3).astype(np.float64) / 255)
     pcd = o3d.geometry.PointCloud(points)
     pcd.colors = colors
+
     if return_mapping:
-        return pcd, mapping
-    mapping = np.arange(len(xyz))
+        # pixel coordinates
+        u = np.tile(np.arange(W), H)
+        v = np.repeat(np.arange(H), W)
+        uv = np.stack([u, v], axis=1)
+        return pcd, uv
+    return pcd
+
+def voxel_downsample_with_uv(pcd, voxel_size):
+    points = np.asarray(pcd.points)
+    uvs = np.asarray(pcd.point["uv"])
+
+    # quantize to voxel grid
+    voxel_indices = np.floor(points / voxel_size).astype(np.int32)
+    _, unique_idx = np.unique(voxel_indices, axis=0, return_index=True)
+
+    down_points = points[unique_idx]
+    down_uvs = uvs[unique_idx]
+
+    down_pcd = o3d.geometry.PointCloud()
+    down_pcd.points = o3d.utility.Vector3dVector(down_points)
+    down_pcd.point["uv"] = o3d.utility.Vector2dVector(down_uvs)
+    return down_pcd
+
 
 def merge_pcds(
     voxel_size: float,
     n_points: int,
     pcds: list[o3d.geometry.PointCloud],
+    pcd_mappings: list[dict],
     ws_aabb: o3d.geometry.AxisAlignedBoundingBox,
 ) -> o3d.geometry.PointCloud:
     merged_pcd = functools.reduce(lambda a, b: a + b, pcds, o3d.geometry.PointCloud())
+    print("Number of points:", np.asarray(merged_pcd.points).shape)
     merged_pcd = merged_pcd.crop(ws_aabb)
-    downsampled_pcd = merged_pcd.voxel_down_sample(voxel_size=voxel_size)
+    downsampled_pcd = voxel_downsample_with_uv(merged_pcd, voxel_size)
     if len(downsampled_pcd.points) > n_points:
         ratio = n_points / len(downsampled_pcd.points)
         downsampled_pcd = downsampled_pcd.random_down_sample(ratio)
@@ -47,14 +73,3 @@ def merge_pcds(
         downsampled_pcd += zeros_pcd
     return downsampled_pcd
 
-def depth2pcd(
-    depth: np.ndarray,
-    camera_intrinsics: np.ndarray,
-) -> o3d.geometry.PointCloud:
-    depth = depth.reshape(-1, 1)
-    x, y = np.meshgrid(np.arange(depth.shape[1]), np.arange(depth.shape[0]))
-    x = x.reshape(-1, 1)
-    y = y.reshape(-1, 1)
-    points = np.concatenate([x, y, depth], axis=-1)
-    pcd = make_pcd(points, np.ones_like(depth))
-    return pcd

@@ -54,7 +54,7 @@ class RLBenchEnv(BaseEnv):
             rgb=True,
             depth=True,
             mask=False,
-            point_cloud=False,
+            point_cloud=True,
             image_size=(128, 128),
             render_mode=RenderMode.OPENGL,
         )
@@ -153,14 +153,15 @@ class RLBenchEnv(BaseEnv):
         return robot_state
 
     def get_pcd(self, obs: Observation) -> o3d.geometry.PointCloud:
-        right_pcd = make_pcd(obs.right_shoulder_point_cloud, obs.right_shoulder_rgb)
-        left_pcd = make_pcd(obs.left_shoulder_point_cloud, obs.left_shoulder_rgb)
-        overhead_pcd = make_pcd(obs.overhead_point_cloud, obs.overhead_rgb)
-        front_pcd = make_pcd(obs.front_point_cloud, obs.front_rgb)
-        wrist_pcd = make_pcd(obs.wrist_point_cloud, obs.wrist_rgb)
+        right_pcd, right_pcd_mapping = make_pcd(obs.right_shoulder_point_cloud, obs.right_shoulder_rgb, return_mapping=True)
+        left_pcd, left_pcd_mapping = make_pcd(obs.left_shoulder_point_cloud, obs.left_shoulder_rgb, return_mapping=True)
+        overhead_pcd, overhead_pcd_mapping = make_pcd(obs.overhead_point_cloud, obs.overhead_rgb, return_mapping=True)
+        front_pcd, front_pcd_mapping = make_pcd(obs.front_point_cloud, obs.front_rgb, return_mapping=True)
+        wrist_pcd, wrist_pcd_mapping = make_pcd(obs.wrist_point_cloud, obs.wrist_rgb, return_mapping=True)
         pcd_list = [right_pcd, left_pcd, overhead_pcd, front_pcd, wrist_pcd]
-        pcd = merge_pcds(self.voxel_size, self.n_points, pcd_list, self.ws_aabb)
-        return pcd
+        pcd_mapping_list = [right_pcd_mapping, left_pcd_mapping, overhead_pcd_mapping, front_pcd_mapping, wrist_pcd_mapping]
+        pcd = merge_pcds(self.voxel_size, self.n_points, pcd_list, pcd_mapping_list, self.ws_aabb)
+        return pcd, pcd_mapping_list
     
 
     def get_images(self, obs: Observation) -> np.ndarray:
