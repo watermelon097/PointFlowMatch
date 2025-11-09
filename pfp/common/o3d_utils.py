@@ -7,13 +7,24 @@ import open3d as o3d
 def make_pcd(
     xyz: np.ndarray,
     rgb: np.ndarray,
+    return_mapping: bool = False,
 ) -> o3d.geometry.PointCloud:
+    """
+    Make a point cloud from xyz and rgb.
+    Args:   
+        xyz: (N, 3) - Point cloud coordinates
+        rgb: (N, 3) - Point cloud colors
+    Returns:
+        pcd: (N, 3) - Point cloud
+        mapping: (N, 1) - Mapping from point cloud to image pixels
+    """
     points = o3d.utility.Vector3dVector(xyz.reshape(-1, 3))
     colors = o3d.utility.Vector3dVector(rgb.reshape(-1, 3).astype(np.float64) / 255)
     pcd = o3d.geometry.PointCloud(points)
     pcd.colors = colors
-    return pcd
-
+    if return_mapping:
+        return pcd, mapping
+    mapping = np.arange(len(xyz))
 
 def merge_pcds(
     voxel_size: float,
@@ -35,3 +46,15 @@ def merge_pcds(
         zeros_pcd.colors = o3d.utility.Vector3dVector(zeros)
         downsampled_pcd += zeros_pcd
     return downsampled_pcd
+
+def depth2pcd(
+    depth: np.ndarray,
+    camera_intrinsics: np.ndarray,
+) -> o3d.geometry.PointCloud:
+    depth = depth.reshape(-1, 1)
+    x, y = np.meshgrid(np.arange(depth.shape[1]), np.arange(depth.shape[0]))
+    x = x.reshape(-1, 1)
+    y = y.reshape(-1, 1)
+    points = np.concatenate([x, y, depth], axis=-1)
+    pcd = make_pcd(points, np.ones_like(depth))
+    return pcd

@@ -46,15 +46,18 @@ def main(cfg: OmegaConf):
             # [right_shoulder_rgb, left_shoulder_rgb, overhead_rgb, front_rgb, wrist_rgb]
             images = env.get_images(obs)
             
-            # Extract depths from 5 cameras: (5, 128, 128, 1)
-            depths = env.get_depths(obs)
+            # Point cloud with rgb
+            pcd = env.get_pcd(obs)
+            pcd_xyz = np.asarray(pcd.points)
+            pcd_color = np.asarray(pcd.colors)
             
             # Store data for this timestep
             data_history.append(
                 {
-                    "images": images.astype(np.uint8),           # (5, 128, 128, 3)
-                    "depth": depths.astype(np.float32),           # (5, 128, 128, 1)
+                    "pcd_xyz": pcd_xyz.astype(np.float32),       # (N, 3)
+                    "pcd_color": pcd_color.astype(np.float32),   # (N, 3)
                     "robot_state": robot_state.astype(np.float32),   # (10,) float32
+                    "images": images,           # (5, 128, 128, 3)
                 }
             )
             env.vis_step(robot_state, images)

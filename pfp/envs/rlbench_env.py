@@ -161,6 +161,7 @@ class RLBenchEnv(BaseEnv):
         pcd_list = [right_pcd, left_pcd, overhead_pcd, front_pcd, wrist_pcd]
         pcd = merge_pcds(self.voxel_size, self.n_points, pcd_list, self.ws_aabb)
         return pcd
+    
 
     def get_images(self, obs: Observation) -> np.ndarray:
         images = np.stack(
