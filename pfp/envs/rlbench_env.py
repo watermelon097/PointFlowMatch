@@ -153,16 +153,35 @@ class RLBenchEnv(BaseEnv):
         return robot_state
 
     def get_pcd(self, obs: Observation) -> o3d.geometry.PointCloud:
-        right_pcd, right_pcd_mapping = make_pcd(obs.right_shoulder_point_cloud, obs.right_shoulder_rgb, return_mapping=True)
-        left_pcd, left_pcd_mapping = make_pcd(obs.left_shoulder_point_cloud, obs.left_shoulder_rgb, return_mapping=True)
-        overhead_pcd, overhead_pcd_mapping = make_pcd(obs.overhead_point_cloud, obs.overhead_rgb, return_mapping=True)
-        front_pcd, front_pcd_mapping = make_pcd(obs.front_point_cloud, obs.front_rgb, return_mapping=True)
-        wrist_pcd, wrist_pcd_mapping = make_pcd(obs.wrist_point_cloud, obs.wrist_rgb, return_mapping=True)
+        right_pcd = make_pcd(obs.right_shoulder_point_cloud, obs.right_shoulder_rgb)
+        left_pcd = make_pcd(obs.left_shoulder_point_cloud, obs.left_shoulder_rgb)
+        overhead_pcd = make_pcd(obs.overhead_point_cloud, obs.overhead_rgb)
+        front_pcd = make_pcd(obs.front_point_cloud, obs.front_rgb)
+        wrist_pcd = make_pcd(obs.wrist_point_cloud, obs.wrist_rgb)
         pcd_list = [right_pcd, left_pcd, overhead_pcd, front_pcd, wrist_pcd]
-        pcd_mapping_list = [right_pcd_mapping, left_pcd_mapping, overhead_pcd_mapping, front_pcd_mapping, wrist_pcd_mapping]
-        pcd = merge_pcds(self.voxel_size, self.n_points, pcd_list, pcd_mapping_list, self.ws_aabb)
-        return pcd, pcd_mapping_list
+        pcd = merge_pcds(self.voxel_size, self.n_points, pcd_list, self.ws_aabb)
+        return pcd
     
+
+    def get_pt_maps_with_mask(self, obs: Observation) -> tuple[np.ndarray, np.ndarray]:
+        right_pt_map = obs.right_shoulder_point_cloud
+        left_pt_map = obs.left_shoulder_point_cloud
+        overhead_pt_map = obs.overhead_point_cloud
+        front_pt_map = obs.front_point_cloud
+        wrist_pt_map = obs.wrist_point_cloud
+        pt_maps = np.stack((right_pt_map, left_pt_map, overhead_pt_map, front_pt_map, wrist_pt_map))
+        mask_list = []
+        for pt_map in pt_maps:
+            H, W, _ = pt_map.shape
+            pt_flat = pt_map.reshape(-1, 3)
+            inside_mask = self.ws_aabb.get_point_indices_within_bounding_box(
+                o3d.utility.Vector3dVector(pt_flat)
+            )
+            mask_flat = np.zeros(pt_flat.shape[0], dtype=bool)
+            mask_flat[inside_mask] = True
+            mask_list.append(mask_flat)
+        mask_list = np.stack(mask_list)
+        return pt_maps, mask_list
 
     def get_images(self, obs: Observation) -> np.ndarray:
         images = np.stack(

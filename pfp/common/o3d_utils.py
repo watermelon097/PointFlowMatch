@@ -7,7 +7,6 @@ import open3d as o3d
 def make_pcd(
     xyz: np.ndarray,
     rgb: np.ndarray,
-    return_mapping: bool = False,
 ) -> o3d.geometry.PointCloud:
     """
     Make a point cloud from xyz and rgb.
@@ -24,43 +23,19 @@ def make_pcd(
     colors = o3d.utility.Vector3dVector(rgb.reshape(-1, 3).astype(np.float64) / 255)
     pcd = o3d.geometry.PointCloud(points)
     pcd.colors = colors
-
-    if return_mapping:
-        # pixel coordinates
-        u = np.tile(np.arange(W), H)
-        v = np.repeat(np.arange(H), W)
-        uv = np.stack([u, v], axis=1)
-        return pcd, uv
     return pcd
-
-def voxel_downsample_with_uv(pcd, voxel_size):
-    points = np.asarray(pcd.points)
-    uvs = np.asarray(pcd.point["uv"])
-
-    # quantize to voxel grid
-    voxel_indices = np.floor(points / voxel_size).astype(np.int32)
-    _, unique_idx = np.unique(voxel_indices, axis=0, return_index=True)
-
-    down_points = points[unique_idx]
-    down_uvs = uvs[unique_idx]
-
-    down_pcd = o3d.geometry.PointCloud()
-    down_pcd.points = o3d.utility.Vector3dVector(down_points)
-    down_pcd.point["uv"] = o3d.utility.Vector2dVector(down_uvs)
-    return down_pcd
 
 
 def merge_pcds(
     voxel_size: float,
     n_points: int,
     pcds: list[o3d.geometry.PointCloud],
-    pcd_mappings: list[dict],
     ws_aabb: o3d.geometry.AxisAlignedBoundingBox,
 ) -> o3d.geometry.PointCloud:
     merged_pcd = functools.reduce(lambda a, b: a + b, pcds, o3d.geometry.PointCloud())
-    print("Number of points:", np.asarray(merged_pcd.points).shape)
     merged_pcd = merged_pcd.crop(ws_aabb)
-    downsampled_pcd = voxel_downsample_with_uv(merged_pcd, voxel_size)
+    downsampled_pcd = merged_pcd.voxel_down_sample(voxel_size)
+
     if len(downsampled_pcd.points) > n_points:
         ratio = n_points / len(downsampled_pcd.points)
         downsampled_pcd = downsampled_pcd.random_down_sample(ratio)
