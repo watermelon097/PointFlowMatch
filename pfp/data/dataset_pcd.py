@@ -78,7 +78,6 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
             n_points: Maximum number of points to sample from point cloud
             subs_factor: Temporal subsampling factor (1 = no subsampling)
         """
-
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
         data_keys = ["robot_state", "pcd_xyz"]
         data_key_first_k = {"pcd_xyz": n_obs_steps * subs_factor}
@@ -143,6 +142,52 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
             pcd = pcd[:, random_indices]
         
         return pcd, robot_state_obs, robot_state_pred
+
+class RobotDatasetPcdWithMask(torch.utils.data.Dataset):
+    def __init__(
+        self, 
+        data_path: str, 
+        n_obs_steps: int, 
+        n_pred_steps: int, 
+        subs_factor: int = 1,
+        use_pc_color: bool = False,
+        n_points: int = 4096
+    ):
+        replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
+        data_keys = ["robot_state", "pt_maps", "mask_list", "images"]
+        data_key_first_k = {
+            "pt_maps": n_obs_steps * subs_factor,
+            "mask_list": n_obs_steps * subs_factor,
+            "images": n_obs_steps * subs_factor,
+        }
+        self.sampler = SequenceSampler(
+            replay_buffer=replay_buffer,
+            sequence_length=(n_obs_steps + n_pred_steps) * subs_factor - (subs_factor - 1),
+            pad_before=(n_obs_steps - 1) * subs_factor,
+            pad_after=(n_pred_steps - 1) * subs_factor + (subs_factor - 1),
+            keys=data_keys,
+            key_first_k=data_key_first_k,
+        )
+        self.n_obs_steps = n_obs_steps
+        self.n_prediction_steps = n_pred_steps
+        self.subs_factor = subs_factor
+        return
+
+    def __len__(self) -> int:
+        return len(self.sampler)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
+        sample: dict[str, np.ndarray] = self.sampler.sample_sequence(idx)
+        cur_step_i = self.n_obs_steps * self.subs_factor
+        pt_maps = sample["pt_maps"][: cur_step_i : self.subs_factor]
+        mask_list = sample["mask_list"][: cur_step_i : self.subs_factor]
+        images = sample["images"][: cur_step_i : self.subs_factor]
+        # Extract robot states
+        robot_state_obs = sample["robot_state"][: cur_step_i : self.subs_factor].astype(np.float32)    # (T_obs, 10)
+        robot_state_pred = sample["robot_state"][cur_step_i :: self.subs_factor].astype(np.float32)   # (T_pred, 10)
+    
+        
+        return pt_maps, mask_list, images, robot_state_obs, robot_state_pred
 
 
 if __name__ == "__main__":
