@@ -127,14 +127,15 @@ def main(cfg: OmegaConf):
             # Store data for this timestep
             data_history.append(
                 {
-                    "pt_maps": pt_maps,       # (N, 3)
-                    "mask_list": mask_list,   # (N,)
+                    "pt_maps": pt_maps,       # (5, 128, 128, 3)
+                    "mask_list": mask_list,   # (5, 128*128)
                     "robot_state": robot_state.astype(np.float32),   # (10,) float32
                     "images": images,           # (5, 128, 128, 3)
                     # "pixel_projections": pixel_projections,   # dict of {cam_name: {'pixel_coords': (N, 2), 'valid_mask': (N,)}}
                 }
             )
-            env.vis_step(robot_state, images)
+            # Visualize with point maps
+            env.vis_step(robot_state, images, pt_maps=pt_maps, mask_list=mask_list)
 
         if cfg.save_data:
             replay_buffer.add_episode_from_list(data_history, compressors="disk")

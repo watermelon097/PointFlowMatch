@@ -1,15 +1,18 @@
 import hydra
 from omegaconf import OmegaConf
 from pfp import DATA_DIRS, set_seeds
-from pfp.data.dataset_pcd import RobotDatasetPcd
+from pfp.data.dataset_pcd import RobotDatasetPcd, RobotDatasetPtMapsWithMask
 from pfp.data.dataset_images import RobotDatasetImages
 
 import rerun as rr
 from pfp.common.visualization import RerunViewer as RV
 from pfp.common.visualization import RerunTraj
 
-TASK_NAME = "sponge_on_plate"
-MODE = "valid"  # "train" or "valid"
+import open3d as o3d
+from pfp.common.o3d_utils import make_pcd, merge_pcds
+
+TASK_NAME = "unplug_charger"
+MODE = "train"  # "train" or "valid"
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="train")
@@ -20,7 +23,7 @@ def main(cfg: OmegaConf):
     print(OmegaConf.to_yaml(cfg))
     set_seeds(cfg.seed)
 
-    data_path_train = DATA_DIRS.PFP_REAL / TASK_NAME / MODE
+    data_path_train = DATA_DIRS.PFP / TASK_NAME / MODE
     # data_path_valid = DATA_DIRS.PFP_REAL / TASK_NAME / MODE
     if cfg.obs_mode == "pcd":
         dataset_train = RobotDatasetPcd(data_path_train, **cfg.dataset)
@@ -28,6 +31,9 @@ def main(cfg: OmegaConf):
     elif cfg.obs_mode == "rgb":
         dataset_train = RobotDatasetImages(data_path_train, **cfg.dataset)
         # dataset_valid = RobotDatasetImages(data_path_valid, **cfg.dataset)
+    elif cfg.obs_mode == "pt_map":
+        dataset_train = RobotDatasetPtMapsWithMask(data_path_train, **cfg.dataset)
+        # dataset_valid = RobotDatasetPcdWithMask(data_path_valid, **cfg.dataset)
     else:
         raise ValueError(f"Unknown observation mode: {cfg.obs_mode}")
 
@@ -39,9 +45,11 @@ def main(cfg: OmegaConf):
         # pcd: (2, 4096, 3)
         # robot_state_obs: (2, 10)
         # robot_state_pred: (32, 10)
-        pcd, robot_state_obs, robot_state_pred = dataset_train[i]
+        pt_maps, mask_list, _, robot_state_obs, robot_state_pred = dataset_train[i]
+        pcd_list = [make_pcd(pt_map) for pt_map in pt_maps]
+        pcd = merge_pcds(pcd_list)
         rr.set_time_sequence("timestep", i)
-        RV.add_np_pointcloud("vis/pointcloud", pcd[-1])
+        RV.add_o3d_pointcloud("vis/pointcloud", pcd)
         obs_traj.add_traj("vis/robot_state_obs", robot_state_obs, size=0.008)
         pred_traj.add_traj("vis/robot_state_pred", robot_state_pred, size=0.004)
         rr.log("plot/gripper_pred", rr.Scalar(robot_state_pred[0, -1]))

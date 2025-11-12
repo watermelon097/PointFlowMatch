@@ -9,7 +9,7 @@ n_obs_steps: 2
 n_pred_steps: 32  # Must be divisible by 4
 use_ema: True
 save_each_n_epochs: 500
-obs_mode: pcd  # pcd | rgb | rgbd
+obs_mode: pt_map  # pcd | rgb | pt_map
 run_name: null  # set this to continue training from previous ckpt
 
 

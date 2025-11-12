@@ -143,7 +143,7 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
         
         return pcd, robot_state_obs, robot_state_pred
 
-class RobotDatasetPcdWithMask(torch.utils.data.Dataset):
+class RobotDatasetPtMapsWithMask(torch.utils.data.Dataset):
     def __init__(
         self, 
         data_path: str, 
