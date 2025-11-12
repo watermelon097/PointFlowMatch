@@ -8,8 +8,8 @@ import rerun as rr
 from pfp.common.visualization import RerunViewer as RV
 from pfp.common.visualization import RerunTraj
 
-TASK_NAME = "sponge_on_plate"
-MODE = "valid"  # "train" or "valid"
+TASK_NAME = "unplug_charger"
+MODE = "train"  # "train" or "valid"
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="train")
@@ -20,7 +20,7 @@ def main(cfg: OmegaConf):
     print(OmegaConf.to_yaml(cfg))
     set_seeds(cfg.seed)
 
-    data_path_train = DATA_DIRS.PFP_REAL / TASK_NAME / MODE
+    data_path_train = DATA_DIRS.PFP / TASK_NAME / MODE
     # data_path_valid = DATA_DIRS.PFP_REAL / TASK_NAME / MODE
     if cfg.obs_mode == "pcd":
         dataset_train = RobotDatasetPcd(data_path_train, **cfg.dataset)

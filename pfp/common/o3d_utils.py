@@ -34,17 +34,17 @@ def merge_pcds(
     ws_aabb: o3d.geometry.AxisAlignedBoundingBox,
 ) -> o3d.geometry.PointCloud:
     merged_pcd = functools.reduce(lambda a, b: a + b, pcds, o3d.geometry.PointCloud())
-    # merged_pcd = merged_pcd.crop(ws_aabb)
-    # downsampled_pcd = merged_pcd.voxel_down_sample(voxel_size)
-    # if len(downsampled_pcd.points) > n_points:
-    #     ratio = n_points / len(downsampled_pcd.points)
-    #     downsampled_pcd = downsampled_pcd.random_down_sample(ratio)
-    # if len(downsampled_pcd.points) < n_points:
-    #     # Append zeros to make the point cloud have the desired number of points
-    #     num_missing_points = n_points - len(downsampled_pcd.points)
-    #     zeros = np.zeros((num_missing_points, 3))
-    #     zeros_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(zeros))
-    #     zeros_pcd.colors = o3d.utility.Vector3dVector(zeros)
-    #     downsampled_pcd += zeros_pcd
-    return merged_pcd
+    merged_pcd = merged_pcd.crop(ws_aabb)
+    downsampled_pcd = merged_pcd.voxel_down_sample(voxel_size)
+    if len(downsampled_pcd.points) > n_points:
+        ratio = n_points / len(downsampled_pcd.points)
+        downsampled_pcd = downsampled_pcd.random_down_sample(ratio)
+    if len(downsampled_pcd.points) < n_points:
+        # Append zeros to make the point cloud have the desired number of points
+        num_missing_points = n_points - len(downsampled_pcd.points)
+        zeros = np.zeros((num_missing_points, 3))
+        zeros_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(zeros))
+        zeros_pcd.colors = o3d.utility.Vector3dVector(zeros)
+        downsampled_pcd += zeros_pcd
+    return downsampled_pcd
 
