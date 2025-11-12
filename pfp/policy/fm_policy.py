@@ -22,7 +22,6 @@ class FMPolicy(ComposerModel, BasePolicy):
         num_k_infer: int,
         time_conditioning: bool,
         obs_encoder: nn.Module,
-        image_encoder: nn.Module,
         diffusion_net: nn.Module,
         augment_data: bool = False,
         loss_weights: dict[int] = None,
@@ -46,7 +45,6 @@ class FMPolicy(ComposerModel, BasePolicy):
         self.num_k_infer = num_k_infer
         self.time_conditioning = time_conditioning
         self.obs_encoder = obs_encoder # pcd encoder
-        self.image_encoder = image_encoder # image encoder
         self.diffusion_net = diffusion_net # velocity predictor
         self.norm_pcd_center = norm_pcd_center
         self.augment_data = augment_data
@@ -142,7 +140,7 @@ class FMPolicy(ComposerModel, BasePolicy):
             batch = self._norm_data(batch)
             if self.augment_data:
                 batch = self._augment_data(batch)
-        images, depths, robot_state_obs, robot_state_pred = batch
+        pcd, robot_state_obs, robot_state_pred = batch
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
             pcd, robot_state_obs, robot_state_pred
         )
