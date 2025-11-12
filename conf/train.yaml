@@ -31,7 +31,7 @@ dataset:
 
 
 dataloader:
-  batch_size: 128
+  batch_size: 80
   num_workers: 0
   # pin_memory: True
 
@@ -51,4 +51,3 @@ lr_scheduler:
 defaults:
   - model: flow
   - backbone: pointnet
-  - backbone@image_encoder: dinov2
