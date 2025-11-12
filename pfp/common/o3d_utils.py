@@ -18,7 +18,6 @@ def make_pcd(
         pcd: Point cloud object with H*W points
         mapping: dict {pcd_index: (x, y)} - Dictionary mapping point cloud index to 2D pixel coordinates (only if return_mapping=True)
     """
-    H, W = xyz.shape[0], xyz.shape[1]
     points = o3d.utility.Vector3dVector(xyz.reshape(-1, 3))
     colors = o3d.utility.Vector3dVector(rgb.reshape(-1, 3).astype(np.float64) / 255) if rgb is not None else None
     pcd = o3d.geometry.PointCloud(points)

@@ -143,7 +143,7 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
         
         return pcd, robot_state_obs, robot_state_pred
 
-class RobotDatasetPtMapsWithMask(torch.utils.data.Dataset):
+class RobotDatasetPtMaps(torch.utils.data.Dataset):
     def __init__(
         self, 
         data_path: str, 
@@ -191,8 +191,9 @@ class RobotDatasetPtMapsWithMask(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-    dataset = RobotDatasetPcd(
-        data_path=DATA_DIRS.PFP / "open_fridge" / "train",
+    
+    dataset = RobotDatasetPtMaps(
+        data_path=DATA_DIRS.PFP / "unplug_charger" / "train",
         n_obs_steps=2,
         n_pred_steps=8,
         subs_factor=5,
@@ -200,7 +201,10 @@ if __name__ == "__main__":
         n_points=4096,
     )
     i = 20
-    obs, robot_state_obs, robot_state_pred = dataset[i]
+    pt_maps, mask_list, images, robot_state_obs, robot_state_pred = dataset[i]
+    print("pt_maps: ", pt_maps.shape)
+    print("mask_list: ", mask_list.shape)
+    print("images: ", images.shape)
     print("robot_state_obs: ", robot_state_obs)
     print("robot_state_pred: ", robot_state_pred)
     print("done")

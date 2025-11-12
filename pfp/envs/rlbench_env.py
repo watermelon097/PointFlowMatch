@@ -42,9 +42,9 @@ class RLBenchEnv(BaseEnv):
         use_pc_color: bool,
         headless: bool,
         vis: bool,
-        obs_mode: str = "pcd",
+        obs_mode: str = "pt_map",
     ):
-        assert obs_mode in ["pcd", "rgb"], "Invalid obs_mode"
+        assert obs_mode in ["pcd", "rgb", "pt_map"], "Invalid obs_mode"
         self.obs_mode = obs_mode
         # image_size=(128, 128)
         self.voxel_size = voxel_size
@@ -186,11 +186,11 @@ class RLBenchEnv(BaseEnv):
             )
             mask_flat = np.zeros(pt_flat.shape[0], dtype=bool)
             mask_flat[inside_mask] = True
-            mask_list.append(mask_flat)
+            mask_list.append(mask_flat.reshape(H, W))
         mask_list = np.stack(mask_list)
         return pt_maps, mask_list
     
-    def merge_pt_maps(self, pt_maps: np.ndarray, mask_list: np.ndarray = None) -> o3d.geometry.PointCloud:
+    def merge_pt_maps(self, pt_maps: np.ndarray, mask_list: np.ndarray) -> o3d.geometry.PointCloud:
         """
         Merge point maps from all cameras into a single point cloud.
         
@@ -201,39 +201,10 @@ class RLBenchEnv(BaseEnv):
         Returns:
             Merged point cloud (filtered by bbox, downsampled, etc.)
         """
-        pcd_list = []
-        camera_names = ['right_shoulder', 'left_shoulder', 'overhead', 'front', 'wrist']
-        
-        for i, (pt_map, cam_name) in enumerate(zip(pt_maps, camera_names)):
-            H, W, _ = pt_map.shape
-            pt_flat = pt_map.reshape(-1, 3)  # (H*W, 3)
-            
-            # Get RGB colors if available (would need to pass them separately)
-            # For now, create a point cloud without colors
-            pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pt_flat))
-            
-            # Apply mask if provided
-            if mask_list is not None:
-                mask = mask_list[i].reshape(H, W)
-                # Filter points using mask
-                valid_indices = np.where(mask.flatten())[0]
-                if len(valid_indices) > 0:
-                    pcd = pcd.select_by_index(valid_indices)
-            
-            pcd_list.append(pcd)
-        
-        # Filter out empty point clouds before merging
-        pcd_list = [pcd for pcd in pcd_list if len(pcd.points) > 0]
-        
-        # If all point clouds are empty, return an empty point cloud
-        if len(pcd_list) == 0:
-            empty_pcd = o3d.geometry.PointCloud()
-            return empty_pcd
-        
-        # Merge all point clouds (correct argument order: pcds first)
-        merged_pcd = merge_pcds(pcd_list, self.voxel_size, self.n_points, self.ws_aabb)
+        pcd_list = [o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pt_map[mask])) for pt_map, mask in zip(pt_maps, mask_list)]
+        merged_pcd = merge_pcds(pcd_list)
         return merged_pcd
-
+    
     def get_images(self, obs: Observation) -> np.ndarray:
         images = np.stack(
             (
@@ -263,17 +234,16 @@ class RLBenchEnv(BaseEnv):
         robot_state: np.ndarray, 
         obs: np.ndarray, 
         prediction: np.ndarray = None,
-        pt_maps: np.ndarray = None,
         mask_list: np.ndarray = None,
     ):
         """
         robot_state: the current robot state (10,)
-        obs: either pcd or images
+        obs: either pcd, images or pt_maps
             - pcd: the current point cloud (N, 6) or (N, 3)
             - images: the current images (5, H, W, 3)
+            - pt_maps: (5, H, W, 3) - Point maps from all cameras
         prediction: the full trajectory of robot states (T, 10)
-        pt_maps: optional (5, H, W, 3) - Point maps from all cameras
-        mask_list: optional (5, H*W) - Masks for point maps
+        mask_list: (5, H*W) - Masks for point maps
         """
         VIS_FLOW = False
         if not self.vis:
@@ -281,40 +251,23 @@ class RLBenchEnv(BaseEnv):
         rr.set_time_seconds("time", time.time())
 
         # If point maps are provided, visualize merged point cloud from them
-        if pt_maps is not None:
+        if self.obs_mode == "pt_map":
+            # obs: (pt_maps, images)
+            pt_maps = obs[0]
             merged_pcd = self.merge_pt_maps(pt_maps, mask_list)
             pcd_xyz = np.asarray(merged_pcd.points)
             pcd_color = None
-            if merged_pcd.has_colors():
-                pcd_color = (np.asarray(merged_pcd.colors) * 255).astype(np.uint8)
-            RV.add_np_pointcloud("vis/pcd_obs_merged", points=pcd_xyz, colors_uint8=pcd_color, radii=0.003)
-            
-            # Optionally visualize individual camera point clouds
-            camera_names = ['right_shoulder', 'left_shoulder', 'overhead', 'front', 'wrist']
-            for i, (pt_map, cam_name) in enumerate(zip(pt_maps, camera_names)):
-                H, W, _ = pt_map.shape
-                pt_flat = pt_map.reshape(-1, 3)
-                # Apply mask if provided
-                if mask_list is not None:
-                    mask = mask_list[i]
-                    pt_flat = pt_flat[mask]
-                if len(pt_flat) > 0:
-                    RV.add_np_pointcloud(f"vis/pcd_{cam_name}", points=pt_flat, radii=0.002)
 
-        # Point cloud
+            RV.add_np_pointcloud("vis/pcd_obs_merged", points=pcd_xyz, colors_uint8=pcd_color, radii=0.003)
+
+            for i, img in enumerate(obs[1]):
+                RV.add_rgb(f"vis/rgb_obs_{i}", img)
         elif self.obs_mode == "pcd":
-            # Check if obs is actually images (shape: 5, H, W, 3) or point cloud (N, 3 or N, 6)
-            if len(obs.shape) == 4 and obs.shape[0] == 5:
-                # It's images, visualize them instead
-                images = obs
-                for i, img in enumerate(images):
-                    RV.add_rgb(f"vis/rgb_obs_{i}", img)
-            else:
-                # It's a point cloud
-                pcd = obs
-                pcd_xyz = pcd[:, :3]
-                pcd_color = (pcd[:, 3:6] * 255).astype(np.uint8) if self.use_pc_color else None
-                RV.add_np_pointcloud("vis/pcd_obs", points=pcd_xyz, colors_uint8=pcd_color, radii=0.003)
+            # It's a point cloud
+            pcd = obs
+            pcd_xyz = pcd[:, :3]
+            pcd_color = (pcd[:, 3:6] * 255).astype(np.uint8) if self.use_pc_color else None
+            RV.add_np_pointcloud("vis/pcd_obs", points=pcd_xyz, colors_uint8=pcd_color, radii=0.003)
 
         # RGB images
         elif self.obs_mode == "rgb":
