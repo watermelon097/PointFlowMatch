@@ -4,6 +4,7 @@
 **/wandb/**
 **/ckpt/**
 **/demos*/**
+**/vis/** 
 **.html
 **/toy_circle/results/**
 *plot.png
