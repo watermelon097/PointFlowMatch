@@ -3,7 +3,7 @@
 **/multirun/**
 **/wandb/**
 **/ckpt/**
-**/demos/**
+**/demos*/**
 **.html
 **/toy_circle/results/**
 *plot.png
