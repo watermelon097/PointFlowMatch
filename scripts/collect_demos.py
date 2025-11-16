@@ -117,19 +117,20 @@ def main(cfg: OmegaConf):
             # Extract images from 5 cameras: (5, 128, 128, 3)
             # [right_shoulder_rgb, left_shoulder_rgb, overhead_rgb, front_rgb, wrist_rgb]
             images = env.get_images(obs)
-            pt_maps, mask_list = env.get_pt_maps_with_mask(obs)
+            pcd, pixel_idx, map_idx = env.get_pcd_with_idx(obs)
             
             # Store data for this timestep
             data_history.append(
                 {
-                    "pt_maps": pt_maps,       # (5, 128, 128, 3)
-                    "mask_list": mask_list,   # (5, 128*128)
+                    "pcd": pcd,       # (N, 3)
+                    "pixel_idx": pixel_idx,   # (N, 2)
+                    "map_idx": map_idx,   # (N, 1)
                     "robot_state": robot_state.astype(np.float32),   # (10,) float32
                     "images": images,           # (5, 128, 128, 3)
                 }
             )
             # Visualize with point maps
-            env.vis_step(robot_state, (pt_maps, images), mask_list=mask_list)
+            env.vis_step(robot_state, (pcd, images, pixel_idx, map_idx))
 
         if cfg.save_data:
             replay_buffer.add_episode_from_list(data_history, compressors="disk")

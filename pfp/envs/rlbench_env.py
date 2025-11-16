@@ -17,6 +17,7 @@ from rlbench.utils import name_to_task_class
 from pfp.common.visualization import RerunViewer as RV
 from pfp.common.o3d_utils import make_pcd, merge_pcds
 from pfp.common.se3_utils import rot6d_to_quat_np, pfp_to_pose_np
+from pfp.common.fm_utils import fps_numpy
 
 try:
     import rerun as rr
@@ -43,9 +44,9 @@ class RLBenchEnv(BaseEnv):
         use_pc_color: bool,
         headless: bool,
         vis: bool,
-        obs_mode: str = "pt_map",
+        obs_mode: str = "pcd_with_idx",
     ):
-        assert obs_mode in ["pcd", "rgb", "pt_map"], "Invalid obs_mode"
+        assert obs_mode in ["pcd", "rgb", "pcd_with_idx"], "Invalid obs_mode"
         self.obs_mode = obs_mode
         # image_size=(128, 128)
         self.voxel_size = voxel_size
@@ -164,13 +165,14 @@ class RLBenchEnv(BaseEnv):
         return pcd
     
 
-    def get_pt_maps_with_mask(self, obs: Observation) -> tuple[np.ndarray, np.ndarray]:
+    def get_pcd_with_idx(self, obs: Observation) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Get point maps from all cameras with masks indicating which points are inside the bbox.
+        Get point cloud from all pt maps.
         
         Returns:
-            pt_maps: (5, H, W, 3) - Point clouds from 5 cameras
-            mask_list: (5, H*W) - Boolean masks, True for points inside bbox
+            pcd: (N, 3) - Point cloud
+            pixel_idx: (N, 2) - Pixel indices
+            map_idx: (N, 1) - Map indices
         """
         right_pt_map = obs.right_shoulder_point_cloud
         left_pt_map = obs.left_shoulder_point_cloud
@@ -209,15 +211,14 @@ class RLBenchEnv(BaseEnv):
         pixel_idx_all = np.concatenate(pixel_idx_all, axis=0)
         map_idx_all = np.concatenate(map_idx_all, axis=0)
 
-        # voxel downsample points
-
+        # Voxel downsample points
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points_all)
         pcd_down = pcd.voxel_down_sample(self.voxel_size)
         points_down = np.asarray(pcd_down.points)
 
         tree= cKDTree(points_all)
-        dists, idx = tree.query(points_down, k=1)
+        _, idx = tree.query(points_down, k=1)
         pixel_idx_down = pixel_idx_all[idx]
         map_idx_down = map_idx_all[idx]
 
@@ -225,30 +226,27 @@ class RLBenchEnv(BaseEnv):
         if points_down.shape[0] > self.n_points:
             pcd_fps = o3d.geometry.PointCloud()
             pcd_fps.points = o3d.utility.Vector3dVector(points_down)
-            pcd_fps_down = pcd_fps.farthest_point_down_sample(self.n_points)
-            points_down = np.asarray(pcd_fps_down.points)
-
-            # 找到 FPS 点对应原始 pixel
-            tree_fps = cKDTree(points_down)
-            dists, idxs = tree_fps.query(points_down, k=1)
-            # 对应 pixel 和 map_index 也下采样
-            pixel_idx_down = pixel_idx_down[idxs]
-            map_idx_down = map_idx_down[idxs]
+            downsampled = pcd_fps.farthest_point_down_sample(self.n_points)
+            points_down_fps = np.asarray(downsampled.points)
+            tree = o3d.geometry.KDTreeFlann(points_down_fps)
+            _, idx, _ = tree.search_knn_vector_3d(points_down, 1)
+            pixel_idx_down = pixel_idx_all[idx]
+            map_idx_down = map_idx_all[idx]
 
         if points_down.shape[0] < self.n_points:
             diff = self.n_points - points_down.shape[0]
-            idx = np.random.choice(points_down.shape[0], diff, replace=True) 
-            points_down = np.concatenate([points_down, points_down[idx]], axis=0)
-            pixel_idx_down = np.concatenate([pixel_idx_down, pixel_idx_down[idx]], axis=0)
-            map_idx_down = np.concatenate([map_idx_down, map_idx_down[idx]], axis=0)
+            idx = np.random.choice(points_all.shape[0], diff, replace=False) 
+            points_down = np.concatenate([points_down, points_all[idx]], axis=0)
+            pixel_idx_down = np.concatenate([pixel_idx_down, pixel_idx_all[idx]], axis=0)
+            map_idx_down = np.concatenate([map_idx_down, map_idx_all[idx]], axis=0)
     
-        restored_masks = np.zeros((num_maps, H, W), dtype=bool)
-        for pix, m in zip(pixel_idx_down, map_idx_down):
-            i, j = pix
-            restored_masks[m, i, j] = True
+        # restored_masks = np.zeros((num_maps, H, W), dtype=bool)
+        # for pix, m in zip(pixel_idx_down, map_idx_down):
+        #     i, j = pix
+        #     restored_masks[m, i, j] = True
         # print(f"point cloud shape: {points_down.shape}")
         # print(f"restored masks shape: {restored_masks.shape}")
-        return points_down, restored_masks
+        return points_down, pixel_idx_down, map_idx_down
 
     def merge_pt_maps(self, pt_maps: np.ndarray, mask_list: np.ndarray) -> o3d.geometry.PointCloud:
         """
@@ -294,7 +292,6 @@ class RLBenchEnv(BaseEnv):
         robot_state: np.ndarray, 
         obs: np.ndarray, 
         prediction: np.ndarray = None,
-        mask_list: np.ndarray = None,
     ):
         """
         robot_state: the current robot state (10,)
@@ -311,17 +308,17 @@ class RLBenchEnv(BaseEnv):
         rr.set_time_seconds("time", time.time())
 
         # If point maps are provided, visualize merged point cloud from them
-        if self.obs_mode == "pt_map":
-            # obs: (pt_maps, images)
-            # pt_maps = obs[0]
-            # merged_pcd = self.merge_pt_maps(pt_maps, mask_list)
-            # pcd_xyz = np.asarray(merged_pcd.points)
-            pcd_color = None
-
-            RV.add_np_pointcloud("vis/pcd_obs_merged", points=obs[0], colors_uint8=pcd_color, radii=0.003)
-
-            for i, img in enumerate(obs[1]):
+        if self.obs_mode == "pcd_with_idx":
+            pcd, img, pixel_idx, map_idx = obs
+            # Vectorized color sampling from multi-view images
+            rows = pixel_idx[:, 0]
+            cols = pixel_idx[:, 1]
+            pcd_color = img[map_idx, rows, cols].astype(np.uint8) # [N_points, 3], uint8 RGB
+           
+            RV.add_np_pointcloud("vis/pcd_obs", points=pcd, colors_uint8=pcd_color, radii=0.003)
+            for i, img in enumerate(img):
                 RV.add_rgb(f"vis/rgb_obs_{i}", img)
+
         elif self.obs_mode == "pcd":
             # It's a point cloud
             pcd = obs

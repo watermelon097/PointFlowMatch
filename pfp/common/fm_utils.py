@@ -1,5 +1,18 @@
 import torch
+import numpy as np
 
+
+def fps_numpy(points: np.ndarray, n_samples: int):
+    N, _ = points.shape
+    sample_idx = np.zeros(n_samples, dtype=int)
+    distances = np.ones(N) * 1e10
+    farthest = np.random.randint(0, N)
+    for i in range(n_samples):
+        sample_idx[i] = farthest
+        dist = np.sum((points - points[farthest]) ** 2, axis=-1)
+        distances = np.minimum(distances, dist)
+        farthest = np.argmax(distances)
+    return sample_idx
 
 def get_timesteps(schedule: str, k_steps: int, exp_scale: float = 1.0):
     t = torch.linspace(0, 1, k_steps + 1)[:-1]
