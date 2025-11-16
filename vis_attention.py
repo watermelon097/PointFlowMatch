@@ -78,7 +78,7 @@ if __name__ == '__main__':
     # attentions[:, 283] = 0 
  
     attentions = attentions.reshape(nh, w_featmap, h_featmap)
-    attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=patch_size, mode="nearest")[0].cpu().numpy()
+    attentions = nn.functional.interpolate(attentions.unsqueeze(0), scale_factor=patch_size, mode="bilinear", align_corners=False)[0].cpu().numpy()
     print(attentions.shape)
     # save attentions heatmaps
     os.makedirs(output_dir, exist_ok=True)
