@@ -3,6 +3,7 @@ import hydra
 import torch
 import torch.nn as nn
 import pypose as pp
+import torchvision.transforms as T
 from omegaconf import OmegaConf
 from composer.models import ComposerModel
 from pfp.policy.base_policy import BasePolicy
@@ -142,9 +143,9 @@ class FMPolicy(ComposerModel, BasePolicy):
             batch = self._norm_data(batch)
             if self.augment_data:
                 batch = self._augment_data(batch)
-        images, depths, robot_state_obs, robot_state_pred = batch
+        pcd, mask_list, images, robot_state_obs, robot_state_pred = batch
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
-            pcd, robot_state_obs, robot_state_pred
+            pcd, mask_list, images, robot_state_obs, robot_state_pred
         )
         loss = (
             self.l_w["xyz"] * loss_xyz
@@ -161,9 +162,26 @@ class FMPolicy(ComposerModel, BasePolicy):
         return loss
 
     def calculate_loss(
-        self, pcd: torch.Tensor, robot_state_obs: torch.Tensor, robot_state_pred: torch.Tensor
+        self, 
+        pcd: torch.Tensor, 
+        mask_list: torch.Tensor, 
+        images: torch.Tensor, 
+        robot_state_obs: torch.Tensor, 
+        robot_state_pred: torch.Tensor
     ):
         nx: torch.Tensor = self.obs_encoder(pcd, robot_state_obs)
+        print(nx.shape)
+        # [B, 256, 384]
+        image_transform = T.Compose([
+            T.Resize((224, 224)),
+            T.CenterCrop(224),
+            T.ToTensor(),
+            T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+        images_transformed = [image_transform(image) for image in images]
+        n_dino = self.image_encoder.backbone.forward_features(images_transformed)
+        n_dino = n_dino["x_norm_patchtokens"]
+        n_dino = n_dino.reshape(B, -1)
         ny: torch.Tensor = robot_state_pred
 
         B = ny.shape[0]
@@ -187,11 +205,11 @@ class FMPolicy(ComposerModel, BasePolicy):
         outputs: the output of the forward pass
         """
         batch = self._norm_data(batch)
-        pcd, robot_state_obs, robot_state_pred = batch
+        pcd, mask_list, images, robot_state_obs, robot_state_pred = batch
 
         # Eval loss
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
-            pcd, robot_state_obs, robot_state_pred
+            pcd, mask_list, images, robot_state_obs, robot_state_pred
         )
         loss_total = (
             self.l_w["xyz"] * loss_xyz

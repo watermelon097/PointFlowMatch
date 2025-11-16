@@ -1,4 +1,5 @@
 import time
+from scipy.spatial import cKDTree
 import numpy as np
 import open3d as o3d
 import spatialmath.base as sm
@@ -178,18 +179,77 @@ class RLBenchEnv(BaseEnv):
         wrist_pt_map = obs.wrist_point_cloud
         pt_maps = np.stack((right_pt_map, left_pt_map, overhead_pt_map, front_pt_map, wrist_pt_map))
         mask_list = []
-        for pt_map in pt_maps:
-            H, W, _ = pt_map.shape
+        
+        num_maps, H, W, _ = pt_maps.shape
+        points_all = []
+        pixel_idx_all = []
+        map_idx_all = []
+        for m, pt_map in enumerate(pt_maps):
             pt_flat = pt_map.reshape(-1, 3)
             inside_mask = self.ws_aabb.get_point_indices_within_bounding_box(
                 o3d.utility.Vector3dVector(pt_flat)
             )
             mask_flat = np.zeros(pt_flat.shape[0], dtype=bool)
             mask_flat[inside_mask] = True
-            mask_list.append(mask_flat.reshape(H, W))
-        mask_list = np.stack(mask_list)
-        return pt_maps, mask_list
+
+            # [x,3], x number of points inside the bbox
+            pts_filtered = pt_flat[inside_mask]
+            if pts_filtered.shape[0] == 0:
+                continue
+            points_all.append(pts_filtered)
+
+            # save corresponding pixel position
+            ii, jj = np.where(mask_flat.reshape(H, W))
+            pixel_idx_all.append(np.stack([ii, jj], axis=1))
+            map_idx_all.append(np.full(ii.shape, m))
+
+        if len(points_all) == 0:
+            raise ValueError("No points inside the bbox")
+        points_all = np.concatenate(points_all, axis=0)
+        pixel_idx_all = np.concatenate(pixel_idx_all, axis=0)
+        map_idx_all = np.concatenate(map_idx_all, axis=0)
+
+        # voxel downsample points
+
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points_all)
+        pcd_down = pcd.voxel_down_sample(self.voxel_size)
+        points_down = np.asarray(pcd_down.points)
+
+        tree= cKDTree(points_all)
+        dists, idx = tree.query(points_down, k=1)
+        pixel_idx_down = pixel_idx_all[idx]
+        map_idx_down = map_idx_all[idx]
+
+        # FPS downsample to self.n_points
+        if points_down.shape[0] > self.n_points:
+            pcd_fps = o3d.geometry.PointCloud()
+            pcd_fps.points = o3d.utility.Vector3dVector(points_down)
+            pcd_fps_down = pcd_fps.farthest_point_down_sample(self.n_points)
+            points_down = np.asarray(pcd_fps_down.points)
+
+            # 找到 FPS 点对应原始 pixel
+            tree_fps = cKDTree(points_down)
+            dists, idxs = tree_fps.query(points_down, k=1)
+            # 对应 pixel 和 map_index 也下采样
+            pixel_idx_down = pixel_idx_down[idxs]
+            map_idx_down = map_idx_down[idxs]
+
+        if points_down.shape[0] < self.n_points:
+            diff = self.n_points - points_down.shape[0]
+            idx = np.random.choice(points_down.shape[0], diff, replace=True) 
+            points_down = np.concatenate([points_down, points_down[idx]], axis=0)
+            pixel_idx_down = np.concatenate([pixel_idx_down, pixel_idx_down[idx]], axis=0)
+            map_idx_down = np.concatenate([map_idx_down, map_idx_down[idx]], axis=0)
     
+        restored_masks = np.zeros((num_maps, H, W), dtype=bool)
+        for pix, m in zip(pixel_idx_down, map_idx_down):
+            i, j = pix
+            restored_masks[m, i, j] = True
+        # print(f"point cloud shape: {points_down.shape}")
+        # print(f"restored masks shape: {restored_masks.shape}")
+        return points_down, restored_masks
+
     def merge_pt_maps(self, pt_maps: np.ndarray, mask_list: np.ndarray) -> o3d.geometry.PointCloud:
         """
         Merge point maps from all cameras into a single point cloud.
@@ -253,12 +313,12 @@ class RLBenchEnv(BaseEnv):
         # If point maps are provided, visualize merged point cloud from them
         if self.obs_mode == "pt_map":
             # obs: (pt_maps, images)
-            pt_maps = obs[0]
-            merged_pcd = self.merge_pt_maps(pt_maps, mask_list)
-            pcd_xyz = np.asarray(merged_pcd.points)
+            # pt_maps = obs[0]
+            # merged_pcd = self.merge_pt_maps(pt_maps, mask_list)
+            # pcd_xyz = np.asarray(merged_pcd.points)
             pcd_color = None
 
-            RV.add_np_pointcloud("vis/pcd_obs_merged", points=pcd_xyz, colors_uint8=pcd_color, radii=0.003)
+            RV.add_np_pointcloud("vis/pcd_obs_merged", points=obs[0], colors_uint8=pcd_color, radii=0.003)
 
             for i, img in enumerate(obs[1]):
                 RV.add_rgb(f"vis/rgb_obs_{i}", img)
