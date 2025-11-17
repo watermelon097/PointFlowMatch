@@ -228,10 +228,11 @@ class RLBenchEnv(BaseEnv):
             pcd_fps.points = o3d.utility.Vector3dVector(points_down)
             downsampled = pcd_fps.farthest_point_down_sample(self.n_points)
             points_down_fps = np.asarray(downsampled.points)
-            tree = o3d.geometry.KDTreeFlann(points_down_fps)
-            _, idx, _ = tree.search_knn_vector_3d(points_down, 1)
-            pixel_idx_down = pixel_idx_all[idx]
-            map_idx_down = map_idx_all[idx]
+            tree_voxel = cKDTree(points_down)
+            _, idx_fps = tree_voxel.query(points_down_fps, k=1)
+            pixel_idx_down = pixel_idx_down[idx_fps]
+            map_idx_down = map_idx_down[idx_fps]
+            points_down = points_down[idx_fps]
 
         if points_down.shape[0] < self.n_points:
             diff = self.n_points - points_down.shape[0]

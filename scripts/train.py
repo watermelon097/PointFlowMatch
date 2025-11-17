@@ -20,7 +20,7 @@ from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from pfp import DEVICE, DATA_DIRS, set_seeds
 from pfp.data.dataset_pcd import RobotDatasetPcd
 from pfp.data.dataset_images import RobotDatasetImages
-from pfp.data.dataset_images import RobotDatasetRGBD
+from pfp.data.dataset_images import RobotDatasetPcdWithIdx
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="train")
@@ -131,9 +131,10 @@ def main(cfg: OmegaConf):
     #   * images: (T_obs, 5, 128, 128, 3) - images from 5 cameras
     #   * robot_state_obs: (T_obs, 10) - observed robot states
     #   * robot_state_pred: (T_pred, 10) - predicted robot states
-    # - RGBD mode: (images, depths, robot_state_obs, robot_state_pred)
-    #   * images: (T_obs, 5, 128, 128, 3) - images from 5 cameras
-    #   * depths: (T_obs, 5, 128, 128) - depth images from 5 cameras
+    # - Pcd with idx mode: (pcd, pixel_idx, map_idx, robot_state_obs, robot_state_pred)
+    #   * pcd: (N, 3) - point cloud
+    #   * pixel_idx: (N, 2) - pixel indices
+    #   * map_idx: (N, 1) - map indices
     #   * robot_state_obs: (T_obs, 10) - observed robot states
     #   * robot_state_pred: (T_pred, 10) - predicted robot states
     if cfg.obs_mode == "pcd":
@@ -142,9 +143,10 @@ def main(cfg: OmegaConf):
     elif cfg.obs_mode == "rgb":
         dataset_train = RobotDatasetImages(data_path_train, **cfg.dataset)
         dataset_valid = RobotDatasetImages(data_path_valid, **cfg.dataset)
-    elif cfg.obs_mode == "rgbd":
-        dataset_train = RobotDatasetRGBD(data_path_train, **cfg.dataset)
-        dataset_valid = RobotDatasetRGBD(data_path_valid, **cfg.dataset)
+    elif cfg.obs_mode == "pcd_with_idx":
+        dataset_train = RobotDatasetPcdWithIdx(data_path_train, **cfg.dataset)
+        dataset_valid = RobotDatasetPcdWithIdx(data_path_valid, **cfg.dataset)
+
     else:
         raise ValueError(f"Unknown observation mode: {cfg.obs_mode}")
     dataloader_train = DataLoader(

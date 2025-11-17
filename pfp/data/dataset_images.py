@@ -47,13 +47,15 @@ class RobotDatasetImages(torch.utils.data.Dataset):
         return images, robot_state_obs, robot_state_pred
 
 
-class RobotDatasetRGBD(torch.utils.data.Dataset):
+class RobotDatasetPcdWithIdx(torch.utils.data.Dataset):
     """
     PyTorch dataset for RGB-D image-based robot manipulation sequences.
     
     Returns:
         images: (T_obs, 5, 128, 128, 3) - RGB images from 5 cameras
-        depths: (T_obs, 5, 128, 128) - Depth images from 5 cameras
+        pcd: (N, 3) - point cloud
+        pixel_idx: (N, 2) - pixel indices
+        map_idx: (N, 1) - map indices
         robot_state_obs: (T_obs, 10) - Observed robot states
         robot_state_pred: (T_pred, 10) - Future robot states to predict
     """
@@ -65,10 +67,12 @@ class RobotDatasetRGBD(torch.utils.data.Dataset):
         subs_factor: int = 1,  # 1 means no subsampling
     ) -> None:
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
-        data_keys = ["robot_state", "images", "depths"]
+        data_keys = ["robot_state", "images", "pcd", "pixel_idx", "map_idx"]
         data_key_first_k = {
             "images": n_obs_steps * subs_factor,
-            "depths": n_obs_steps * subs_factor,
+            "pcd": n_obs_steps * subs_factor,
+            "pixel_idx": n_obs_steps * subs_factor,
+            "map_idx": n_obs_steps * subs_factor,
         }
         self.sampler = SequenceSampler(
             replay_buffer=replay_buffer,
