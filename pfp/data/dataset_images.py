@@ -65,7 +65,9 @@ class RobotDatasetPcdWithIdx(torch.utils.data.Dataset):
         n_obs_steps: int,
         n_pred_steps: int,
         subs_factor: int = 1,  # 1 means no subsampling
+        **kwargs,
     ) -> None:
+        print("data path: ", data_path)
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
         data_keys = ["robot_state", "images", "pcd", "pixel_idx", "map_idx"]
         data_key_first_k = {

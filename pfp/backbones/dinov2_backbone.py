@@ -43,3 +43,5 @@ class DINOv2Backbone(torch.nn.Module):
             feat_map = F.interpolate(feat_map, size=resize_to, mode='bilinear', align_corners=False)
         return feat_map
 
+    def forward_features(self, x):
+        return self.backbone.forward_features(x)

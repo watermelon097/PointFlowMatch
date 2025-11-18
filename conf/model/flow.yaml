@@ -15,6 +15,7 @@
   snr_sampler: uniform  # uniform | logit_normal
 
   obs_encoder: ${backbone}
+  image_encoder: ${image_encoder}
   
   diffusion_net:
     _target_: diffusion_policy.model.diffusion.conditional_unet1d.ConditionalUnet1D

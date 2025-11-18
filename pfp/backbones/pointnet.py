@@ -226,7 +226,9 @@ class PointNetBackbone(nn.Module):
         B = pcd.shape[0]
         # Flatten the batch and time dimensions
         pcd = pcd.float().reshape(-1, *pcd.shape[2:])
+        print("backbone: pcd shape: ", pcd.shape)
         robot_state_obs = robot_state_obs.float().reshape(-1, *robot_state_obs.shape[2:])
+        print("backbone: robot_state_obs shape: ", robot_state_obs.shape)
         # Permute [B, P, C] -> [B, C, P]
         pcd = pcd.permute(0, 2, 1)
         # Encode all point clouds (across time steps and batch size)

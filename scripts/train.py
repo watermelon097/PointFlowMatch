@@ -18,9 +18,8 @@ from composer.algorithms import EMA           # Exponential Moving Average for m
 
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from pfp import DEVICE, DATA_DIRS, set_seeds
-from pfp.data.dataset_pcd import RobotDatasetPcd
+from pfp.data.dataset_pcd import RobotDatasetPcd, RobotDatasetPcdWithIdx
 from pfp.data.dataset_images import RobotDatasetImages
-from pfp.data.dataset_images import RobotDatasetPcdWithIdx
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="train")

@@ -58,6 +58,28 @@ class FMPolicy(ComposerModel, BasePolicy):
         self.flow_schedule = flow_schedule
         self.exp_scale = exp_scale
         self.snr_sampler = snr_sampler
+        self.image_transform = T.Compose([
+            T.Resize((224, 224)),
+            T.CenterCrop(224),
+            T.ToTensor(),
+            T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
+        self.dino_decoder = nn.Sequential(
+            nn.ConvTranspose2d(384, 256, 2, 2),      # B, 256, 32, 32
+            nn.BatchNorm2d(256),
+            nn.GELU(),
+
+            nn.ConvTranspose2d(256, 128, 2, 2),      # B, 128, 64, 64
+            nn.BatchNorm2d(128),
+            nn.GELU(),
+
+            nn.Upsample(size=128, mode="bilinear", align_corners=False), # B, 128, 224, 224
+
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.GELU(),
+        )
+        self.img_proj = nn.Linear(128, 128)
+            
         if loss_type == "l2":
             self.loss_fun = nn.MSELoss()
         elif loss_type == "l1":
@@ -92,11 +114,11 @@ class FMPolicy(ComposerModel, BasePolicy):
         return robot_state
 
     def _norm_data(self, batch: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
-        pcd, robot_state_obs, robot_state_pred = batch
+        pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred = batch
         pcd = self._norm_obs(pcd)
         robot_state_obs = self._norm_robot_state(robot_state_obs)
         robot_state_pred = self._norm_robot_state(robot_state_pred)
-        return pcd, robot_state_obs, robot_state_pred
+        return pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred
 
     def _augment_data(self, batch: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
         return augment_pcd_data(batch)
@@ -143,9 +165,9 @@ class FMPolicy(ComposerModel, BasePolicy):
             batch = self._norm_data(batch)
             if self.augment_data:
                 batch = self._augment_data(batch)
-        pcd, mask_list, images, robot_state_obs, robot_state_pred = batch
+        pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred = batch
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
-            pcd, mask_list, images, robot_state_obs, robot_state_pred
+            pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred
         )
         loss = (
             self.l_w["xyz"] * loss_xyz
@@ -164,27 +186,34 @@ class FMPolicy(ComposerModel, BasePolicy):
     def calculate_loss(
         self, 
         pcd: torch.Tensor, 
-        mask_list: torch.Tensor, 
+        pixel_idx: torch.Tensor, 
+        map_idx: torch.Tensor, 
         images: torch.Tensor, 
         robot_state_obs: torch.Tensor, 
         robot_state_pred: torch.Tensor
     ):
         nx: torch.Tensor = self.obs_encoder(pcd, robot_state_obs)
-        print(nx.shape)
-        # [B, 256, 384]
-        image_transform = T.Compose([
-            T.Resize((224, 224)),
-            T.CenterCrop(224),
-            T.ToTensor(),
-            T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-        ])
-        images_transformed = [image_transform(image) for image in images]
-        n_dino = self.image_encoder.backbone.forward_features(images_transformed)
-        n_dino = n_dino["x_norm_patchtokens"]
-        n_dino = n_dino.reshape(B, -1)
+        print("loss: nx shape: ", nx.shape)
+        print("loss: pcd shape: ", pcd.shape) 
+        # if dataloader give uint8 BCHW
+        B = images.shape[0]
+        print("images shape: ", images.shape)
+        if images.dtype != torch.float32:
+            images = images.float()/255.0
+        if images.shape[-1] == 3:
+            images = images.permute(0, 3, 1, 2).contiguous()
+
+        images = images.to(DEVICE)
+        images = self.image_transform(images)
+        with torch.no_grad():
+            dino_feats = self.image_encoder.forward_features(images)
+        dino_feats = dino_feats["x_norm_patchtokens"]
+        patch_map = dino_feats.view(B, 16, 16, 384).permute(0, 3, 1, 2)
+        dense_feats= self.dino_decoder(patch_map)
+
+        nx = torch.cat([nx, img_global], dim=1)
         ny: torch.Tensor = robot_state_pred
 
-        B = ny.shape[0]
         t = self._sample_snr(B)
         z0 = self._init_noise(ny.shape[0])
         z1 = ny
@@ -196,7 +225,6 @@ class FMPolicy(ComposerModel, BasePolicy):
         loss_rot6d = self.loss_fun(pred_vel[..., 3:9], target_vel[..., 3:9])
         loss_grip = self.loss_fun(pred_vel[..., 9], target_vel[..., 9])
         return loss_xyz, loss_rot6d, loss_grip
-
     # ############### Inference ################
 
     def eval_forward(self, batch: tuple[torch.Tensor, ...], outputs=None) -> torch.Tensor:
@@ -205,11 +233,11 @@ class FMPolicy(ComposerModel, BasePolicy):
         outputs: the output of the forward pass
         """
         batch = self._norm_data(batch)
-        pcd, mask_list, images, robot_state_obs, robot_state_pred = batch
+        pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred = batch
 
         # Eval loss
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
-            pcd, mask_list, images, robot_state_obs, robot_state_pred
+            pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred
         )
         loss_total = (
             self.l_w["xyz"] * loss_xyz

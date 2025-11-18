@@ -32,7 +32,7 @@ def main(cfg: OmegaConf):
     elif cfg.obs_mode == "rgb":
         dataset_train = RobotDatasetImages(data_path_train, **cfg.dataset)
         # dataset_valid = RobotDatasetImages(data_path_valid, **cfg.dataset)
-    elif cfg.obs_mode == "pt_map":
+    elif cfg.obs_mode == "pcd_with_idx":
         dataset_train = RobotDatasetPtMaps(data_path_train, **cfg.dataset)
         # dataset_valid = RobotDatasetPcdWithMask(data_path_valid, **cfg.dataset)
     else:

@@ -143,7 +143,7 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
         
         return pcd, robot_state_obs, robot_state_pred
 
-class RobotDatasetPtMaps(torch.utils.data.Dataset):
+class RobotDatasetPcdWithIdx(torch.utils.data.Dataset):
     def __init__(
         self, 
         data_path: str, 
@@ -154,10 +154,11 @@ class RobotDatasetPtMaps(torch.utils.data.Dataset):
         n_points: int = 4096
     ):
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
-        data_keys = ["robot_state", "pt_maps", "mask_list", "images"]
+        data_keys = ["robot_state", "pcd", "pixel_idx", "map_idx", "images"]
         data_key_first_k = {
-            "pt_maps": n_obs_steps * subs_factor,
-            "mask_list": n_obs_steps * subs_factor,
+            "pcd": n_obs_steps * subs_factor,
+            "pixel_idx": n_obs_steps * subs_factor,
+            "map_idx": n_obs_steps * subs_factor,
             "images": n_obs_steps * subs_factor,
         }
         self.sampler = SequenceSampler(
@@ -171,6 +172,7 @@ class RobotDatasetPtMaps(torch.utils.data.Dataset):
         self.n_obs_steps = n_obs_steps
         self.n_prediction_steps = n_pred_steps
         self.subs_factor = subs_factor
+        self.n_points = n_points
         return
 
     def __len__(self) -> int:
@@ -179,20 +181,24 @@ class RobotDatasetPtMaps(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
         sample: dict[str, np.ndarray] = self.sampler.sample_sequence(idx)
         cur_step_i = self.n_obs_steps * self.subs_factor
-        pt_maps = sample["pt_maps"][: cur_step_i : self.subs_factor]
-        mask_list = sample["mask_list"][: cur_step_i : self.subs_factor]
+        pcd = sample["pcd"][: cur_step_i : self.subs_factor]
+        map_idx = sample["map_idx"][: cur_step_i : self.subs_factor]
+        pixel_idx = sample["pixel_idx"][: cur_step_i : self.subs_factor]
         images = sample["images"][: cur_step_i : self.subs_factor]
         # Extract robot states
         robot_state_obs = sample["robot_state"][: cur_step_i : self.subs_factor].astype(np.float32)    # (T_obs, 10)
         robot_state_pred = sample["robot_state"][cur_step_i :: self.subs_factor].astype(np.float32)   # (T_pred, 10)
-    
-        
-        return pt_maps, mask_list, images, robot_state_obs, robot_state_pred
+        if pcd.shape[1] > self.n_points:
+            random_indices = np.random.choice(pcd.shape[1], self.n_points, replace=False)
+            pcd = pcd[:, random_indices]
+            pixel_idx = pixel_idx[:,random_indices]
+            map_idx = map_idx[:,random_indices]
+        return pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred
 
 
 if __name__ == "__main__":
     
-    dataset = RobotDatasetPtMaps(
+    dataset = RobotDatasetPcdWithIdx(
         data_path=DATA_DIRS.PFP / "unplug_charger" / "train",
         n_obs_steps=2,
         n_pred_steps=8,
@@ -201,9 +207,11 @@ if __name__ == "__main__":
         n_points=4096,
     )
     i = 20
-    pt_maps, mask_list, images, robot_state_obs, robot_state_pred = dataset[i]
-    print("pt_maps: ", pt_maps.shape)
-    print("mask_list: ", mask_list.shape)
+    pcd, pixel_idx, map_idx, images, robot_state_obs, robot_state_pred = dataset[i]
+    print("pcd: ", pcd.shape)
+    print("pixel_idx: ", pixel_idx.shape)
+    print("map_idx: ", map_idx.shape)
+    print("mask_list: ", map_idx.shape)
     print("images: ", images.shape)
     print("robot_state_obs: ", robot_state_obs)
     print("robot_state_pred: ", robot_state_pred)
