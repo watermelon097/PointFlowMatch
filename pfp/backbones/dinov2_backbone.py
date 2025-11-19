@@ -44,4 +44,4 @@ class DINOv2Backbone(torch.nn.Module):
         return feat_map
 
     def forward_features(self, x):
-        return self.backbone.forward_features(x)
+        return self.backbone.forward_features(x)["x_norm_patchtokens"]

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import pypose as pp
 import torchvision.transforms as T
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 from composer.models import ComposerModel
 from pfp.policy.base_policy import BasePolicy
@@ -59,27 +60,24 @@ class FMPolicy(ComposerModel, BasePolicy):
         self.exp_scale = exp_scale
         self.snr_sampler = snr_sampler
         self.image_transform = T.Compose([
-            T.Resize((224, 224)),
-            T.CenterCrop(224),
-            T.ToTensor(),
+            T.Resize((224, 224), antialias=True),
             T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         ])
-        self.dino_decoder = nn.Sequential(
-            nn.ConvTranspose2d(384, 256, 2, 2),      # B, 256, 32, 32
-            nn.BatchNorm2d(256),
-            nn.GELU(),
+        # self.dino_decoder = nn.Sequential(
+        #     nn.ConvTranspose2d(384, 256, 2, 2),      # B, 256, 32, 32
+        #     nn.BatchNorm2d(256),
+        #     nn.GELU(),
 
-            nn.ConvTranspose2d(256, 128, 2, 2),      # B, 128, 64, 64
-            nn.BatchNorm2d(128),
-            nn.GELU(),
+        #     nn.ConvTranspose2d(256, 128, 2, 2),      # B, 128, 64, 64
+        #     nn.BatchNorm2d(128),
+        #     nn.GELU(),
 
-            nn.Upsample(size=128, mode="bilinear", align_corners=False), # B, 128, 224, 224
+        #     nn.Upsample(size=128, mode="bilinear", align_corners=False), # B, 128, 224, 224
 
-            nn.Conv2d(128, 128, 3, padding=1),
-            nn.GELU(),
-        )
-        self.img_proj = nn.Linear(128, 128)
-            
+        #     nn.Conv2d(128, 128, 3, padding=1),
+        #     nn.GELU(),
+        # )
+        self.num_patches = 16
         if loss_type == "l2":
             self.loss_fun = nn.MSELoss()
         elif loss_type == "l1":
@@ -195,23 +193,84 @@ class FMPolicy(ComposerModel, BasePolicy):
         nx: torch.Tensor = self.obs_encoder(pcd, robot_state_obs)
         print("loss: nx shape: ", nx.shape)
         print("loss: pcd shape: ", pcd.shape) 
-        # if dataloader give uint8 BCHW
-        B = images.shape[0]
+        
+        # Process images: [B, T, num_cameras, H, W, C]
+        B, T, num_cameras, H, W, C = images.shape
         print("images shape: ", images.shape)
+        print("pixel_idx shape:", pixel_idx.shape)
+        print("map_idx shape:", map_idx.shape)
+
+        # Convert to float and normalize
         if images.dtype != torch.float32:
-            images = images.float()/255.0
-        if images.shape[-1] == 3:
-            images = images.permute(0, 3, 1, 2).contiguous()
+            images = images.float() / 255.0
+        
+        # Reshape: [B, T, num_cameras, H, W, C] -> [B*T*num_cameras, H, W, C]
+        images = images.reshape(-1, H, W, C)
 
+        # Permute: [B*T*num_cameras, H, W, C] -> [B*T*num_cameras, C, H, W]
+        images = images.permute(0, 3, 1, 2).contiguous()
         images = images.to(DEVICE)
-        images = self.image_transform(images)
-        with torch.no_grad():
-            dino_feats = self.image_encoder.forward_features(images)
-        dino_feats = dino_feats["x_norm_patchtokens"]
-        patch_map = dino_feats.view(B, 16, 16, 384).permute(0, 3, 1, 2)
-        dense_feats= self.dino_decoder(patch_map)
 
-        nx = torch.cat([nx, img_global], dim=1)
+        # Apply transforms and extract DINOv2 features
+        images = self.image_transform(images)  # [B*T*num_cameras, 3, 224, 224]
+        with torch.no_grad():
+            dino_feats = self.image_encoder.forward_features(images) # [B*T*num_cameras, 256, 384]
+
+        # # Reshape to spatial tokens: [B*T*num_cameras, 384, 16, 16]
+        patch_map = dino_feats.view(B * T * num_cameras, self.num_patches, self.num_patches, 384)
+        print("patch_map shape: ", patch_map.shape)
+        patch_map = patch_map.permute(0, 3, 1, 2)  # [B*T*num_cameras, 384, 16, 16]
+        # dense_feats = self.dino_decoder(patch_map) # [B*T*num_cameras, 128, 128, 128]
+        # chunk_size = 16  # 或 64，根据显存调整
+        # dense_chunks = []
+        # for chunk in patch_map.split(chunk_size, dim=0):
+        #     dense_chunks.append(
+        #         F.interpolate(chunk, size=(128, 128), mode="bilinear", align_corners=False)
+        #     )
+        # dense_feats = torch.cat(dense_chunks, dim=0).view(B, T, num_cameras, 384, 128, 128)
+        # Decode dense features in smaller chunks to avoid exceeding INT_MAX elements
+        # chunk_size = 256
+        # dense_chunks = []
+        # for chunk in patch_map.split(chunk_size, dim=0):
+        #     dense_chunks.append(self.dino_decoder(chunk))
+        # dense_feats = torch.cat(dense_chunks, dim=0)  # [B*T*num_cameras, 128, 128, 128]
+        # dense_feats = dense_feats.view(B, T, num_cameras, 128, 128, 128)
+
+        # Move to device
+        # pixel_idx = pixel_idx.to(DEVICE)  # [B, T, N_points, 2]
+        # map_idx = map_idx.to(DEVICE).long()  # [B, T, N_points]
+
+        # _, _, N_points, _ = pcd.shape
+
+        # # Clamp pixel coordinates to valid range and flatten batch/time dims
+        # rows = pixel_idx[..., 0].clamp(0, 127).long()  # [B, T, N_points]
+        # cols = pixel_idx[..., 1].clamp(0, 127).long()
+
+        # # dense_feats_flat = dense_feats.view(B * T, num_cameras, 128, 128, 128)
+        # rows_flat = rows.view(B * T, N_points)
+        # cols_flat = cols.view(B * T, N_points)
+        # map_idx_flat = map_idx.view(B * T, N_points)
+
+        # batch_indices = torch.arange(B * T, device=DEVICE).unsqueeze(1).expand(-1, N_points)
+        # point_features = dense_feats[
+        #     batch_indices,
+        #     map_idx_flat,
+        #     :,
+        #     rows_flat,
+        #     cols_flat,
+        # ]  # [B*T, N_points, 128]
+
+        # # Reshape back and aggregate
+        # point_features = point_features.view(B, T, N_points, 384)
+        # img_features = point_features.mean(dim=[1, 2])  # [B, 128]
+
+        # nx = torch.cat([nx, img_features], dim=1)
+
+
+
+        # # sample features from patch_map
+
+
         ny: torch.Tensor = robot_state_pred
 
         t = self._sample_snr(B)

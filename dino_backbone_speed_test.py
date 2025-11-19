@@ -49,7 +49,7 @@ model.cuda()
 
 
 with torch.no_grad():
-    feats = model.backbone.get_intermediate_layers(img_tensor.unsqueeze(0).cuda(), n=1)[0]
+    feats = model.backbone(img_tensor.unsqueeze(-1).cuda())
     patch_tokens = model.backbone.forward_features(img_tensor.unsqueeze(0).cuda())
     patch_tokens = patch_tokens["x_norm_patchtokens"].cpu()
 
