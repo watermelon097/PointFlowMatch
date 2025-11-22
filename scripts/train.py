@@ -2,6 +2,7 @@
 Train PointFlowMatch policy on RLBench demonstrations using Composer framework.
 Supports both point cloud and RGB image observations with configurable model architectures.
 """
+
 import os
 import hydra  # Configuration management framework - loads YAML configs and enables easy experimentation
 import wandb
@@ -10,11 +11,17 @@ from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
 # Composer (MosaicML): Production-ready PyTorch training framework
-from composer.trainer import Trainer          # High-level trainer that handles training loop, checkpointing, distributed training
-from composer.loggers import WandBLogger      # WandB integration for experiment tracking
-from composer.callbacks import LRMonitor      # Callback to log learning rate during training
-from composer.models import ComposerModel     # Base class for models - requires forward() and loss() methods
-from composer.algorithms import EMA           # Exponential Moving Average for model weights
+from composer.trainer import (
+    Trainer,
+)  # High-level trainer that handles training loop, checkpointing, distributed training
+from composer.loggers import WandBLogger  # WandB integration for experiment tracking
+from composer.callbacks import (
+    LRMonitor,
+)  # Callback to log learning rate during training
+from composer.models import (
+    ComposerModel,
+)  # Base class for models - requires forward() and loss() methods
+from composer.algorithms import EMA  # Exponential Moving Average for model weights
 
 from diffusion_policy.model.common.lr_scheduler import get_scheduler
 from pfp import DEVICE, DATA_DIRS, set_seeds
@@ -27,45 +34,45 @@ from pfp.data.dataset_images import RobotDatasetRGBD
 def main(cfg: OmegaConf):
     """
     Training workflow for PointFlowMatch policy on robot manipulation tasks.
-    
+
     WORKFLOW OVERVIEW:
     ==================
     1. Configuration Setup (Hydra):
        - Loads hierarchical configs: train.yaml → model/flow.yaml → backbone/pointnet.yaml
        - Resolves variable references (e.g., ${backbone} → PointNetBackbone config)
        - Enables CLI overrides: python train.py task_name=open_box epochs=2000
-    
+
     2. Data Loading:
        - Loads replay buffers from DATA_DIRS.PFP/{task_name}/train|valid
        - Dataset returns: (observations, robot_state_obs, robot_state_pred)
          * Point cloud mode: pcd (T_obs, N, 3|6), robot states (T_obs|T_pred, 10)
          * RGB mode: images (T_obs, 5, 128, 128, 3), robot states (T_obs|T_pred, 10)
        - Creates PyTorch DataLoaders with optional multiprocessing
-    
+
     3. Model Instantiation (Hydra + Composer):
        - Recursively builds model from config using hydra.utils.instantiate()
        - Structure: FMPolicy(obs_encoder=PointNetBackbone, diffusion_net=UNet1D)
          * obs_encoder: Encodes point clouds → feature vectors (B, T, N, 3) → (B, 532)
          * diffusion_net: Conditional UNet predicting velocity fields for flow matching
        - Model inherits from ComposerModel (requires forward() and loss() methods)
-    
+
     4. Training Setup:
        - Optimizer: AdamW with specified hyperparameters
        - LR Scheduler: Cosine schedule with warmup (stepped per batch)
        - Logger: WandB for experiment tracking
        - Algorithms: Optional EMA (Exponential Moving Average) for stable weights
-    
+
     5. Composer Trainer:
        - Handles complete training loop (no manual epoch/batch loops needed)
        - Features: auto checkpointing, distributed training, mixed precision
        - Calls model.loss(outputs, batch) each iteration
        - Logs metrics to WandB, saves checkpoints every N epochs
-    
+
     6. Training Execution:
        - trainer.fit() runs full training (validation + checkpointing automatic)
        - Saves final config.yaml with checkpoint for reproducibility
        - Auto-launches evaluation script after training completes
-    
+
     MODEL ARCHITECTURE:
     ===================
     FMPolicy (Flow Matching):
@@ -87,11 +94,11 @@ def main(cfg: OmegaConf):
         Output: pred_vel (B, T_pred, 10)
       ↓
       Loss: MSE(pred_vel, target_vel) for [xyz(3), rot6d(6), gripper(1)]
-    
+
     HYDRA FRAMEWORK BEHAVIOR:
     =========================
     The @hydra.main decorator is what enables config-driven execution:
-    
+
     How Hydra Works:
     1. Intercepts function call before main() executes
     2. Reads config_name='train' → loads conf/train.yaml
@@ -102,14 +109,14 @@ def main(cfg: OmegaConf):
     7. Creates output directory (outputs/YYYY-MM-DD/HH-MM-SS/)
     8. Changes working directory to output dir
     9. Passes merged config as 'cfg' parameter to main()
-    
+
     Why Use Hydra?
     - Separation of code and configuration (no hardcoded hyperparameters)
     - Easy experiment management (change configs without editing code)
     - Reproducibility (config saved with each run)
     - Composition (mix and match model/backbone/dataset configs)
     - CLI overrides for quick experiments
-    
+
     Example: python train.py task_name=open_box model=flow_so3 backbone=pointmlp epochs=2000
     → Hydra loads different configs and overrides epochs, all without code changes!
     """
@@ -121,7 +128,7 @@ def main(cfg: OmegaConf):
 
     data_path_train = DATA_DIRS.PFP / cfg.task_name / "train"
     data_path_valid = DATA_DIRS.PFP / cfg.task_name / "valid"
-    
+
     # Dataset returns batches with shapes:
     # - Point cloud mode: (pcd, robot_state_obs, robot_state_pred)
     #   * pcd: (T_obs, N_points, 3 or 6) - XYZ or XYZRGB point clouds
@@ -179,7 +186,7 @@ def main(cfg: OmegaConf):
 
     wandb_logger = WandBLogger(
         project="pfp-train-fixed",
-        entity="rl-lab-chisari",
+        entity="tum-ai",
         init_kwargs={
             "config": OmegaConf.to_container(cfg),
             "mode": "online" if cfg.log_wandb else "disabled",
@@ -192,7 +199,7 @@ def main(cfg: OmegaConf):
     # - Checkpointing with auto-resume
     # - Integration with loggers (WandB) and callbacks
     trainer = Trainer(
-        model=composer_model,              # Model must inherit from ComposerModel
+        model=composer_model,  # Model must inherit from ComposerModel
         train_dataloader=dataloader_train,
         eval_dataloader=dataloader_valid,
         max_duration=cfg.epochs,
@@ -200,15 +207,19 @@ def main(cfg: OmegaConf):
         schedulers=lr_scheduler,
         step_schedulers_every_batch=True,  # Step LR scheduler after each batch (not epoch)
         device="gpu" if DEVICE.type == "cuda" else "cpu",
-        loggers=[wandb_logger],            # Log metrics to WandB
-        callbacks=[LRMonitor()],           # Monitor learning rate changes
+        loggers=[wandb_logger],  # Log metrics to WandB
+        callbacks=[LRMonitor()],  # Monitor learning rate changes
         save_folder="ckpt/{run_name}",
         save_interval=f"{cfg.save_each_n_epochs}ep",  # Checkpoint every N epochs
-        save_num_checkpoints_to_keep=3,    # Keep only last 3 checkpoints
-        algorithms=[EMA()] if cfg.use_ema else None,  # Optional: Exponential Moving Average
-        run_name=cfg.run_name,             # Set this to continue training from previous ckpt
-        autoresume=True if cfg.run_name is not None else False,  # Auto-resume if run_name provided
-        spin_dataloaders=False
+        save_num_checkpoints_to_keep=3,  # Keep only last 3 checkpoints
+        algorithms=[EMA()]
+        if cfg.use_ema
+        else None,  # Optional: Exponential Moving Average
+        run_name=cfg.run_name,  # Set this to continue training from previous ckpt
+        autoresume=True
+        if cfg.run_name is not None
+        else False,  # Auto-resume if run_name provided
+        spin_dataloaders=False,
     )
     wandb.watch(composer_model)
     # Save the used cfg for inference - important for reproducing exact model configuration
@@ -224,7 +235,7 @@ def main(cfg: OmegaConf):
         [
             "bash",
             "bash/start_eval.sh",
-            f"{os.environ['CUDA_VISIBLE_DEVICES']}",
+            f"{os.environ.get('CUDA_VISIBLE_DEVICES', '0')}",
             f"{run_name}",
         ],
         start_new_session=True,
