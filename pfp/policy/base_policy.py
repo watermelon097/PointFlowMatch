@@ -35,7 +35,13 @@ class BasePolicy(ABC):
         return
 
     def sample_stacked_obs(self) -> tuple[np.ndarray, ...]:
-        obs_stacked = np.stack(self.obs_list, axis=0)[:: self.subs_factor]
+        if isinstance(self.obs_list[0], tuple):
+            obs_stacked = tuple(
+                np.stack([obs[i] for obs in self.obs_list], axis=0)[:: self.subs_factor]
+                for i in range(len(self.obs_list[0]))
+            )
+        else:
+            obs_stacked = np.stack(self.obs_list, axis=0)[:: self.subs_factor]
         robot_state_stacked = np.stack(self.robot_state_list, axis=0)[:: self.subs_factor]
         return obs_stacked, robot_state_stacked
 

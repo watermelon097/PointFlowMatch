@@ -1,10 +1,11 @@
 seed: 1234
 epochs: 1500
-log_wandb: False
+log_wandb: True
 task_name: unplug_charger
 obs_features_dim: 256
 y_dim: 10  # (xyz, rot6d, g)
-x_dim: "${eval: '${obs_features_dim} + ${y_dim}'}"
+img_feat_dim: 384
+x_dim: "${eval: '${obs_features_dim} + ${img_feat_dim} + ${y_dim}'}"
 n_obs_steps: 2
 n_pred_steps: 32  # Must be divisible by 4
 use_ema: True

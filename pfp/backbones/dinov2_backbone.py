@@ -30,18 +30,10 @@ class DINOv2Backbone(torch.nn.Module):
     def forward(self, x, resize_to=None):
         """
         x: [B, 3, H, W]
-        resize_to: (H, W) - optional, interpolate to match point flow input resolution
         """
-        print("input shape: ", x.shape)
+        # print("input shape: ", x.shape)
         tokens = self.backbone(x)  # [B, N_patches, D]
-        print(tokens.shape)
-        B, N, D = tokens.shape
-        H = W = int(N ** 0.5)  # 假设 patch 正方形
-        feat_map = tokens.transpose(1, 2).reshape(B, D, H, W)
-        
-        if resize_to:
-            feat_map = F.interpolate(feat_map, size=resize_to, mode='bilinear', align_corners=False)
-        return feat_map
+        return tokens
 
     def forward_features(self, x):
         return self.backbone.forward_features(x)["x_norm_patchtokens"]

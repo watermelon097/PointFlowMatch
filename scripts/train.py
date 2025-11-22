@@ -180,7 +180,7 @@ def main(cfg: OmegaConf):
 
     wandb_logger = WandBLogger(
         project="pfp-train-fixed",
-        entity="rl-lab-chisari",
+        entity="tum-ai",
         init_kwargs={
             "config": OmegaConf.to_container(cfg),
             "mode": "online" if cfg.log_wandb else "disabled",
@@ -225,7 +225,7 @@ def main(cfg: OmegaConf):
         [
             "bash",
             "bash/start_eval.sh",
-            f"{os.environ['CUDA_VISIBLE_DEVICES']}",
+            f"{os.environ.get('CUDA_VISIBLE_DEVICES', '0')}",
             f"{run_name}",
         ],
         start_new_session=True,

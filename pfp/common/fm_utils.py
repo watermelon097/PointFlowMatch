@@ -88,6 +88,8 @@ def extract_dino_features_from_map(
     patch_x = pixel_idx[:, 1] // patch_size
     patch_flat_idx = patch_y * Wp + patch_x  # (K,)
 
+    print("flat_img_idx shape: ", flat_img_idx.shape)
+    print("patch_flat_idx shape: ", patch_flat_idx.shape)
     # Gather features
     features = tokens[flat_img_idx, patch_flat_idx]  # (K, C)
     C = features.shape[1]
@@ -96,3 +98,30 @@ def extract_dino_features_from_map(
     return features
 
 
+
+def extract_dino_features_from_map_v2(
+    model: nn.Module, 
+    images: torch.Tensor, 
+    map_idx: torch.Tensor, 
+    pixel_idx: torch.Tensor, 
+    patch_size: int = 16
+) -> torch.Tensor:
+    """
+    Extract DINOv2 patch features for selected pixels.
+    """
+    B, T, N, H, W, C_img = images.shape
+    print("images shape: ", images.shape)
+    K = map_idx.shape[2]
+    images = images.reshape(-1, H, W, C_img)
+    images = images.float()/255.0
+    images = images.permute(0, 3, 1, 2).contiguous()
+    transform = image_transform()
+    images = transform(images)  # [B*T*N, 3, 224, 224]
+
+    print("images shape: ", images.shape)
+    # Flatten images along (B*T*N) dimension
+    # images_flat = images_flat.to(DEVICE)
+    with torch.no_grad():
+        # Forward pass to get patch tokens
+        tokens = model.forward_features(images)  # (B*T*N, HW, C)
+    print("tokens shape: ", tokens.shape)

@@ -1,4 +1,4 @@
-__target__: pfp.backbones.dinov2_backbone.DINOv2Backbone
-model_name: dinov2_vitl14
+_target_: pfp.backbones.dinov2_backbone.DINOv2Backbone
+model_name: dinov2_vits14
 pretrained: true
-ckpt_path: /home/hjx/work/pfp/dinov2/dinov2_vitl14_pretrain.pth
+ckpt_path: /home/jun.wang/projects/PointFlowMatch/ckpt/dinov2_vits14_pretrain.pth
