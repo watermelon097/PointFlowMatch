@@ -64,22 +64,12 @@ class FMPolicy(ComposerModel, BasePolicy):
             T.Resize((224, 224), antialias=True),
             T.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         ])
-        self.dino_decoder = nn.Sequential(
-            nn.ConvTranspose2d(384, 256, 2, 2),      # B, 256, 32, 32
-            nn.BatchNorm2d(256),
-            nn.GELU(),
-
-            nn.ConvTranspose2d(256, 128, 2, 2),      # B, 128, 64, 64
-            nn.BatchNorm2d(128),
-            nn.GELU(),
-
-            # 第3次上采样 64x64 -> 128x128
-            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
-
-            # 最后一个卷积用于特征精炼
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.GELU(),
-        )
+        # self.dino_decoder = nn.Sequential(
+        #     nn.Linear(384, 256),
+        #     nn.Mish()
+        # )
+        self.img_proj = nn.Linear(384, 256)
+        self.view_weight = nn.Parameter(torch.zeros(5))
         self.num_patches = 16
         if loss_type == "l2":
             self.loss_fun = nn.MSELoss()
@@ -219,9 +209,14 @@ class FMPolicy(ComposerModel, BasePolicy):
         with torch.no_grad():
             dino_feats = self.image_encoder(images) # [B*T*num_cameras, 384]
 
+        # image_features = self.dino_decoder(dino_feats)
         # print("dino_feats shape: ", dino_feats.shape)
         image_features = dino_feats.view(B, T, num_cameras, 384)
-        image_features,_ = torch.max(image_features, dim=2)
+        image_features = self.img_proj(image_features)
+        weight = F.softmax(self.view_weight, dim=-1)
+        weight = weight.view(1, 1, num_cameras, 1)
+        image_features = (image_features * weight).sum(dim=2)
+        # image_features,_ = torch.max(image_features, dim=2)
         image_features = image_features.reshape(B,-1)
         # print("image_features shape: ", image_features.shape)
         # # # Reshape to spatial tokens: [B*T*num_cameras, 384, 16, 16]
@@ -277,9 +272,7 @@ class FMPolicy(ComposerModel, BasePolicy):
         # point_features_reshaped = torch.cat([point_features[:, t, :, :] for t in range(point_features.shape[1])], dim=-1)
         # print("point_features_reshaped shape: ", point_features_reshaped.shape)
         # # img_features = extract_dino_features_from_map(self.image_encoder, images, map_idx, pixel_idx)
-        # print("nx shape: ", nx.shape)
         nx = torch.cat([nx, image_features], dim=1)
-
         # # sample features from patch_map
 
 
@@ -392,11 +385,15 @@ class FMPolicy(ComposerModel, BasePolicy):
                 dino_feats = self.image_encoder(images)  # [B*T*num_cameras, 384]
             
             image_features = dino_feats.view(B, T, num_cameras, 384)
-            image_features, _ = torch.max(image_features, dim=2)
+            image_features = self.img_proj(image_features)
+            weight = F.softmax(self.view_weight, dim=-1)
+            weight = weight.view(1, 1, num_cameras, 1)
+            image_features = (image_features * weight).sum(dim=2)
             image_features = image_features.reshape(B, -1)
             
             # Concatenate with obs_encoder output
             nx = torch.cat([nx, image_features], dim=1)
+            print("nx shape: ", nx.shape)
         
         B = nx.shape[0]
         z = self._init_noise(B) if noise is None else noise
