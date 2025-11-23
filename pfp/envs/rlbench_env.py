@@ -148,7 +148,6 @@ class RLBenchEnv(BaseEnv):
         elif self.obs_mode == "pcd_with_idx":
             pcd, pixel_idx, map_idx = self.get_pcd_with_idx(obs_rlbench)
             images = self.get_images(obs_rlbench)
-            print("pcd shape: ", pcd.shape)
             obs = (pcd, images, pixel_idx, map_idx)
         return robot_state, obs
 
