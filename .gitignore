@@ -3,8 +3,10 @@
 **/multirun/**
 **/wandb/**
 **/ckpt/**
-**/demos/**
+**/demos*/**
+**/vis/** 
 **.html
 **/toy_circle/results/**
 *plot.png
 *.svg
+**/vis/* *
