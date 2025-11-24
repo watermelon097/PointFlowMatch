@@ -8,6 +8,7 @@ import hydra  # Configuration management framework - loads YAML configs and enab
 import wandb
 import subprocess
 from omegaconf import OmegaConf
+from omegaconf.base import ContainerMetadata
 from torch.utils.data import DataLoader
 
 # Composer (MosaicML): Production-ready PyTorch training framework
@@ -30,6 +31,7 @@ from pfp.data.dataset_images import RobotDatasetImages
 from pfp.data.dataset_images import RobotDatasetRGBD
 
 
+torch.serialization.add_safe_globals([ContainerMetadata])
 @hydra.main(version_base=None, config_path="../conf", config_name="train")
 def main(cfg: OmegaConf):
     """
