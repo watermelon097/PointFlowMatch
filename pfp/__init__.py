@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class DATA_DIRS:
-    ROOT = pathlib.Path(__file__).parents[1] / "demos_pcd"
+    ROOT = pathlib.Path(__file__).parents[1] / "demos"
     PFP = ROOT / "sim"
     PFP_REAL = ROOT / "real"
 

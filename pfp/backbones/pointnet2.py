@@ -1,7 +1,8 @@
-import torch 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+
 
 def pc_normalize(pc):
     l = pc.shape[0]
@@ -10,6 +11,7 @@ def pc_normalize(pc):
     m = np.max(np.sqrt(np.sum(pc**2, axis=1)))
     pc = pc / m
     return pc
+
 
 def square_distance(src, dst):
     """
@@ -30,9 +32,10 @@ def square_distance(src, dst):
     B, N, _ = src.shape
     _, M, _ = dst.shape
     dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
-    dist += torch.sum(src ** 2, -1).view(B, N, 1)
-    dist += torch.sum(dst ** 2, -1).view(B, 1, M)
+    dist += torch.sum(src**2, -1).view(B, N, 1)
+    dist += torch.sum(dst**2, -1).view(B, 1, M)
     return dist
+
 
 def farthest_point_sample(xyz, npoint):
     """
@@ -44,6 +47,7 @@ def farthest_point_sample(xyz, npoint):
     """
     device = xyz.device
     B, N, C = xyz.shape
+    print(f"fps: xyz shape: {xyz.shape}")
     centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
     distance = torch.ones(B, N).to(device) * 1e10
     farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
@@ -56,6 +60,7 @@ def farthest_point_sample(xyz, npoint):
         distance[mask] = dist[mask]
         farthest = torch.max(distance, -1)[1]
     return centroids
+
 
 def index_points(points, idx):
     """
@@ -72,7 +77,12 @@ def index_points(points, idx):
     view_shape[1:] = [1] * (len(view_shape) - 1)
     repeat_shape = list(idx.shape)
     repeat_shape[0] = 1
-    batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
+    batch_indices = (
+        torch.arange(B, dtype=torch.long)
+        .to(device)
+        .view(view_shape)
+        .repeat(repeat_shape)
+    )
     new_points = points[batch_indices, idx, :]
     return new_points
 
@@ -90,9 +100,11 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     device = xyz.device
     B, N, C = xyz.shape
     _, S, _ = new_xyz.shape
-    group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
+    group_idx = (
+        torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
+    )
     sqrdists = square_distance(new_xyz, xyz)
-    group_idx[sqrdists > radius ** 2] = N
+    group_idx[sqrdists > radius**2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
     group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
     mask = group_idx == N
@@ -112,24 +124,26 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
         new_xyz: sampled points position data, [B, npoint, nsample, 3]
         new_points: sampled points data, [B, npoint, nsample, 3+D]
     """
+    print(f"sample_and_group: xyz: {xyz.shape}")
     B, N, C = xyz.shape
     S = npoint
-    fps_idx = farthest_point_sample(xyz, npoint) # [B, npoint, C]
+    fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint, C]
     new_xyz = index_points(xyz, fps_idx)
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
-    grouped_xyz = index_points(xyz, idx) # [B, npoint, nsample, C]
+    grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
 
     if points is not None:
         grouped_points = index_points(points, idx)
-        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1) # [B, npoint, nsample, C+D]
+        new_points = torch.cat(
+            [grouped_xyz_norm, grouped_points], dim=-1
+        )  # [B, npoint, nsample, C+D]
     else:
         new_points = grouped_xyz_norm
     if returnfps:
         return new_xyz, new_points, grouped_xyz, fps_idx
     else:
         return new_xyz, new_points
-
 
 
 def sample_and_group_all(xyz: torch.Tensor, points: torch.Tensor):
@@ -153,6 +167,7 @@ def sample_and_group_all(xyz: torch.Tensor, points: torch.Tensor):
     else:
         new_points = grouped_xyz
     return new_xyz, new_points
+
 
 class PointNetSetAbstractor(nn.Module):
     def __init__(
@@ -191,26 +206,31 @@ class PointNetSetAbstractor(nn.Module):
             new_xyz: (B, C, S)
             new_points: (B, D', S)
         """
-        xyz = xyz.permute(0, 2, 1)
+        print(f"backbone: xyz shape:{xyz.shape}")
+        xyz = xyz.contiguous()
         if points is not None:
-            points = points.permute(0, 2, 1).contiguous()
-        
+            points = points.contiguous()
+
         if self.group_all:
             new_xyz, new_points = sample_and_group_all(xyz, points)
         else:
             new_xyz, new_points = sample_and_group(
                 self.npoints, self.radius, self.nsample, xyz, points
-                )           
+            )
         # new_xyz: sampled points position data, [B, npoints, C]
         # new_points: sampled points data, [B, npoints, nsample, D+C]
-        new_points = new_points.permute(0, 3, 1, 2) # [B, D+C, npoints, nsample]
+        new_points = new_points.permute(0, 3, 1, 2)  # [B, D+C, npoints, nsample]
+        print(f"PointNetSetAbstractor forward: new_points shape:{new_points.shape}")
         for i, conv in enumerate(self.mlp_convs):
             bn = self.mlp_bns[i]
-            new_points = F.relu(bn(conv(new_points)), inplace=True)
-
+            new_points = F.relu(bn(conv(new_points)))
+        print(
+            f"PointNetSetAbstractor forward after mlp: new_points shape:{new_points.shape}"
+        )
         new_points = torch.max(new_points, 2)[0]
-        new_xyz = new_xyz.permute(0, 2, 1)
+        new_points = new_points.permute(0, 2, 1)
         return new_xyz, new_points
+
 
 class PointNet2Backbone(nn.Module):
     def __init__(
@@ -220,7 +240,7 @@ class PointNet2Backbone(nn.Module):
         n_points: int = 4096,
         use_group_norm: bool = False,
         sa_configs: list[dict] = None,
-        ):
+    ):
         super().__init__()
         assert input_channels in [3, 6], "Input channels must be 3 or 6"
         in_channels = 6 if input_channels == 6 else 3
@@ -229,13 +249,13 @@ class PointNet2Backbone(nn.Module):
         if sa_configs is None:
             sa_configs = [
                 {
-                    "npoints": 512,
+                    "npoints": 1024,
                     "radius": 0.2,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
                 },
                 {
-                    "npoints": 128,
+                    "npoints": 256,
                     "radius": 0.4,
                     "nsample": 64,
                     "mlp": [128, 128, 256],
@@ -254,27 +274,29 @@ class PointNet2Backbone(nn.Module):
         for i, sa_config in enumerate(sa_configs):
             if sa_config["npoints"] is None:
                 # last layer group all
-                self.sa_layers.append(PointNetSetAbstractor(
-                    npoints=sa_config["npoints"],
-                    radius=sa_config["radius"],
-                    nsample=sa_config["nsample"],
-                    in_channels=in_channel,
-                    mlp=sa_config["mlp"],
-                    group_all=True,
-                ))
+                self.sa_layers.append(
+                    PointNetSetAbstractor(
+                        npoints=sa_config["npoints"],
+                        radius=sa_config["radius"],
+                        nsample=sa_config["nsample"],
+                        in_channels=in_channel,
+                        mlp=sa_config["mlp"],
+                        group_all=True,
+                    )
+                )
             else:
-                self.sa_layers.append(PointNetSetAbstractor(
-                    npoints=sa_config["npoints"],
-                    radius=sa_config["radius"],
-                    nsample=sa_config["nsample"],
-                    in_channels=in_channel,
-                    mlp=sa_config["mlp"],
-                    group_all=False,
-                ))
+                self.sa_layers.append(
+                    PointNetSetAbstractor(
+                        npoints=sa_config["npoints"],
+                        radius=sa_config["radius"],
+                        nsample=sa_config["nsample"],
+                        in_channels=in_channel,
+                        mlp=sa_config["mlp"],
+                        group_all=False,
+                    )
+                )
             in_channel = sa_config["mlp"][-1]
-        self.sa1 = PointNetSetAbstractor(npoints=512, radius=0.2, nsample=32, in_channels=in_channel, mlp=[64, 64, 128], group_all=False)
-        self.sa2 = PointNetSetAbstractor(npoints=128, radius=0.4, nsample=64, in_channels=128 + 3, mlp=[128, 128, 256], group_all=False)
-        self.sa3 = PointNetSetAbstractor(npoints=None, radius=None, nsample=None, in_channels=256 + 3, mlp=[256, 512, 1024], group_all=True)
+
         self.final_mlp = nn.Sequential(
             nn.Linear(1024, 512),
             nn.Mish(),
@@ -287,20 +309,21 @@ class PointNet2Backbone(nn.Module):
             pcd: (B, T, N, C), where C = 3 or 6
             robot_state_obs: (B, T, 10)
         Returns:
-            x: (B, T * embed_dim + 10) 
+            x: (B, T * embed_dim + 10)
         """
         B, T, _, _ = pcd.shape
         original_shape = pcd.shape
 
         # Flatten the batch and time dimensions
         if len(pcd.shape) == 4:
-            pcd = pcd.float().reshape(-1, *pcd.shape[2:]) # (B * T, N, C)
+            pcd = pcd.float().reshape(-1, *pcd.shape[2:])  # (B * T, N, C)
             if robot_state_obs is not None:
-                robot_state_obs = robot_state_obs.float().reshape(-1, *robot_state_obs.shape[2:]) # (B * T, 10)
+                robot_state_obs = robot_state_obs.float().reshape(
+                    -1, *robot_state_obs.shape[2:]
+                )  # (B * T, 10)
         else:
             pcd = pcd.float()
 
-        
         # Separate xyz and features
         xyz = pcd[..., :3]
         if pcd.shape[-1] > 3:
@@ -310,6 +333,7 @@ class PointNet2Backbone(nn.Module):
 
         # Pass through SA layers
         for sa_layer in self.sa_layers:
+            print(f"point2Backbone forward:{xyz.shape}")
             xyz, points = sa_layer(xyz, points)
 
         # Global feature: [B*T, 1, D] -> [B * T, D]
@@ -318,15 +342,15 @@ class PointNet2Backbone(nn.Module):
         else:
             points = torch.max(points, dim=1)[0]
 
-        encoded_pcd = self.final_mlp(points) # [B * T, embed_dim]
+        encoded_pcd = self.final_mlp(points)  # [B * T, embed_dim]
 
         # Concatenate with robot state
         if robot_state_obs is not None:
             nx = torch.cat([encoded_pcd, robot_state_obs], dim=1)
         else:
             nx = encoded_pcd
-        
-        if len(original_shape) == 4: #[B, T, N, C]
-            nx = nx.reshape(B, -1) # [B, T * embed_dim + 10]
-        
+
+        if len(original_shape) == 4:  # [B, T, N, C]
+            nx = nx.reshape(B, -1)  # [B, T * embed_dim + 10]
+
         return nx
