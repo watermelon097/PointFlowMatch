@@ -124,7 +124,6 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
         new_xyz: sampled points position data, [B, npoint, nsample, 3]
         new_points: sampled points data, [B, npoint, nsample, 3+D]
     """
-    print(f"sample_and_group: xyz: {xyz.shape}")
     B, N, C = xyz.shape
     S = npoint
     fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint, C]
@@ -243,15 +242,15 @@ class PointNet2Backbone(nn.Module):
         if sa_configs is None:
             sa_configs = [
                 {
-                    "npoints": 512,
-                    "radius": 0.2,
+                    "npoints": 1024,
+                    "radius": 0.04,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
                     "in_channel": in_channels,
                 },
                 {
-                    "npoints": 128,
-                    "radius": 0.4,
+                    "npoints": 256,
+                    "radius": 0.1,
                     "nsample": 64,
                     "mlp": [128, 128, 256],
                     "in_channel": 128+3,
@@ -330,7 +329,6 @@ class PointNet2Backbone(nn.Module):
 
         # Pass through SA layers
         for sa_layer in self.sa_layers:
-            print(f"point2Backbone forward:{xyz.shape}")
             xyz, points = sa_layer(xyz, points)
 
         # Global feature: [B*T, 1, D] -> [B * T, D]
