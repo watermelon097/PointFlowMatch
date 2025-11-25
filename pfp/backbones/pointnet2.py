@@ -1,3 +1,4 @@
+from types import DynamicClassAttribute
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,7 +48,6 @@ def farthest_point_sample(xyz, npoint):
     """
     device = xyz.device
     B, N, C = xyz.shape
-    print(f"fps: xyz shape: {xyz.shape}")
     centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
     distance = torch.ones(B, N).to(device) * 1e10
     farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
@@ -132,7 +132,6 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
     grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
-
     if points is not None:
         grouped_points = index_points(points, idx)
         new_points = torch.cat(
@@ -206,7 +205,6 @@ class PointNetSetAbstractor(nn.Module):
             new_xyz: (B, C, S)
             new_points: (B, D', S)
         """
-        print(f"backbone: xyz shape:{xyz.shape}")
         xyz = xyz.contiguous()
         if points is not None:
             points = points.contiguous()
@@ -220,14 +218,10 @@ class PointNetSetAbstractor(nn.Module):
         # new_xyz: sampled points position data, [B, npoints, C]
         # new_points: sampled points data, [B, npoints, nsample, D+C]
         new_points = new_points.permute(0, 3, 1, 2)  # [B, D+C, npoints, nsample]
-        print(f"PointNetSetAbstractor forward: new_points shape:{new_points.shape}")
         for i, conv in enumerate(self.mlp_convs):
             bn = self.mlp_bns[i]
             new_points = F.relu(bn(conv(new_points)))
-        print(
-            f"PointNetSetAbstractor forward after mlp: new_points shape:{new_points.shape}"
-        )
-        new_points = torch.max(new_points, 2)[0]
+        new_points = torch.max(new_points, 3)[0]
         new_points = new_points.permute(0, 2, 1)
         return new_xyz, new_points
 
@@ -249,22 +243,25 @@ class PointNet2Backbone(nn.Module):
         if sa_configs is None:
             sa_configs = [
                 {
-                    "npoints": 1024,
+                    "npoints": 512,
                     "radius": 0.2,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
+                    "in_channel": in_channels,
                 },
                 {
-                    "npoints": 256,
+                    "npoints": 128,
                     "radius": 0.4,
                     "nsample": 64,
                     "mlp": [128, 128, 256],
+                    "in_channel": 128+3,
                 },
                 {
                     "npoints": None,  # group all
                     "radius": None,
                     "nsample": None,
                     "mlp": [256, 512, 1024],
+                    "in_channel": 256+3,
                 },
             ]
         self.sa_layers = nn.ModuleList()
@@ -279,7 +276,7 @@ class PointNet2Backbone(nn.Module):
                         npoints=sa_config["npoints"],
                         radius=sa_config["radius"],
                         nsample=sa_config["nsample"],
-                        in_channels=in_channel,
+                        in_channels=sa_config["in_channel"],
                         mlp=sa_config["mlp"],
                         group_all=True,
                     )
@@ -290,7 +287,7 @@ class PointNet2Backbone(nn.Module):
                         npoints=sa_config["npoints"],
                         radius=sa_config["radius"],
                         nsample=sa_config["nsample"],
-                        in_channels=in_channel,
+                        in_channels=sa_config["in_channel"],
                         mlp=sa_config["mlp"],
                         group_all=False,
                     )
