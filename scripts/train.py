@@ -130,7 +130,6 @@ def main(cfg: OmegaConf):
     data_path_train = DATA_DIRS.PFP / cfg.task_name / "train"
     data_path_valid = DATA_DIRS.PFP / cfg.task_name / "valid"
 
-    print(f"DATA path: {DATA_DIRS.ROOT}")
     # Dataset returns batches with shapes:
     # - Point cloud mode: (pcd, robot_state_obs, robot_state_pred)
     #   * pcd: (T_obs, N_points, 3 or 6) - XYZ or XYZRGB point clouds
