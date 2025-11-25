@@ -1,0 +1,19 @@
+_target_: pfp.backbones.pointnet2.PointNet2Backbone
+embed_dim: ${obs_features_dim}
+input_channels: "${eval: '6 if ${dataset.use_pc_color} else 3'}"
+n_points: ${dataset.n_points}
+use_group_norm: False
+# Optional: customize SA layer configurations
+# sa_configs:
+#   - npoint: 1024
+#     radius: 0.1
+#     nsample: 32
+#     mlp: [64, 64, 128]
+#   - npoint: 256
+#     radius: 0.2
+#     nsample: 32
+#     mlp: [128, 128, 256]
+#   - npoint: null  # group_all
+#     radius: null
+#     nsample: null
+#     mlp: [256, 512, 1024]
