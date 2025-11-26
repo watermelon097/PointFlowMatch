@@ -4,16 +4,19 @@ input_channels: "${eval: '6 if ${dataset.use_pc_color} else 3'}"
 n_points: ${dataset.n_points}
 use_group_norm: False
 # Optional: customize SA layer configurations
-# sa_configs:
-#   - npoint: 1024
-#     radius: 0.1
-#     nsample: 32
-#     mlp: [64, 64, 128]
-#   - npoint: 256
-#     radius: 0.2
-#     nsample: 32
-#     mlp: [128, 128, 256]
-#   - npoint: null  # group_all
-#     radius: null
-#     nsample: null
-#     mlp: [256, 512, 1024]
+sa_configs:
+  - npoints: 512  # 改为 npoints (复数)
+    radius: 0.02
+    nsample: 32
+    mlp: [64, 64, 128]
+    in_channel: 6  # 添加 in_channel 字段（根据 input_channels 决定，3 或 6）
+  - npoints: 128  # 改为 npoints (复数)
+    radius: 0.5
+    nsample: 32
+    mlp: [128, 128, 256]
+    in_channel: 131  # 添加 in_channel 字段（128+3，因为上一层输出128维特征+3维xyz）
+  - npoints: null  # 改为 npoints (复数)，group_all
+    radius: null
+    nsample: null
+    mlp: [256, 512, 1024]
+    in_channel: 259  # 添加 in_channel 字段（256+3，因为上一层输出256维特征+3维xyz）

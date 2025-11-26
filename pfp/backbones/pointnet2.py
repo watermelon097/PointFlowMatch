@@ -103,8 +103,18 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
         torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
     )
     sqrdists = square_distance(new_xyz, xyz)
+    print(f"sqrdists shape: {sqrdists.shape}")
     group_idx[sqrdists > radius**2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
+    # valid_points = (group_idx != N).sum(dim=-1)  # [B, S]
+    # print(f"\n=== Valid points per group (before padding) ===")
+    # print(f"Shape: {valid_points.shape} (B={B}, S={S})")
+    # print(f"Min: {valid_points.min().item()}, Max: {valid_points.max().item()}, Mean: {valid_points.float().mean().item():.2f}")
+    # print(f"Groups with 0 valid points: {(valid_points == 0).sum().item()}")
+    # print(f"Groups with <{nsample} valid points: {(valid_points < nsample).sum().item()}")
+    # print(f"Groups with =={nsample} valid points: {(valid_points == nsample).sum().item()}")
+    
+
     group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
     mask = group_idx == N
     group_idx[mask] = group_first[mask]
@@ -125,8 +135,10 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     """
     B, N, C = xyz.shape
     S = npoint
+    print(f"xyz shape: {xyz.shape}")
     fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint]
     new_xyz = index_points(xyz, fps_idx)
+    print(f"new_xyz shape: {new_xyz.shape}")
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
     grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
@@ -241,15 +253,15 @@ class PointNet2Backbone(nn.Module):
             sa_configs = [
                 {
                     "npoints": 512,
-                    "radius": 0.05,
+                    "radius": 0.08,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
                     "in_channel": in_channels,
                 },
                 {
                     "npoints": 128,
-                    "radius": 0.12,
-                    "nsample": 32,
+                    "radius": 0.20,
+                    "nsample": 64,
                     "mlp": [128, 128, 256],
                     "in_channel": 128+3,
                 },
