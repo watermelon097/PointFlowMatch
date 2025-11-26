@@ -1,4 +1,3 @@
-from types import DynamicClassAttribute
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -126,7 +125,7 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     """
     B, N, C = xyz.shape
     S = npoint
-    fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint, C]
+    fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint]
     new_xyz = index_points(xyz, fps_idx)
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
     grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
@@ -148,12 +147,12 @@ def sample_and_group_all(xyz: torch.Tensor, points: torch.Tensor):
     """
     Args:
         xyz: (B, N, 3)
-        points: (B, N, D)
+        points: (B, N, D) or None
     Returns:
         new_xyz: (B, 1, 3)
-        new_points: (B, 1, D)
+        new_points: (B, 1, 3+D) if points is not None, else (B, 1, 3)
      Note:
-        Equivalent to sample_and_group with npoint=1, radius=inf, use (0,0,0) as the centroid
+        Equivalent to sample_and_group with npoint=1, radius=inf, use mean as the centroid
     """
     device = xyz.device
     B, N, C = xyz.shape
@@ -189,7 +188,6 @@ class PointNetSetAbstractor(nn.Module):
             self.mlp_convs.append(nn.Conv2d(last_channel, out_channel, 1))
             self.mlp_bns.append(nn.BatchNorm2d(out_channel))
             last_channel = out_channel
-        self.group_all = group_all
 
     def forward(
         self,
@@ -198,11 +196,11 @@ class PointNetSetAbstractor(nn.Module):
     ):
         """
         Args:
-            xyz: (B, C, N)
-            points: (B, D, N)
+            xyz: (B, N, 3)
+            points: (B, N, D) or None
         Returns:
-            new_xyz: (B, C, S)
-            new_points: (B, D', S)
+            new_xyz: (B, S, 3)
+            new_points: (B, S, D')
         """
         xyz = xyz.contiguous()
         if points is not None:
@@ -264,7 +262,6 @@ class PointNet2Backbone(nn.Module):
                 },
             ]
         self.sa_layers = nn.ModuleList()
-        in_channel = input_channels
 
         # Build SA layers
         for i, sa_config in enumerate(sa_configs):
@@ -329,6 +326,7 @@ class PointNet2Backbone(nn.Module):
             xyz, points = sa_layer(xyz, points)
 
         # Global feature: [B*T, 1, D] -> [B * T, D]
+        # After SA layers, points should never be None (first layer outputs features even if input points is None)
         if points.shape[1] == 1:
             points = points.squeeze(1)
         else:
@@ -336,6 +334,9 @@ class PointNet2Backbone(nn.Module):
 
         encoded_pcd = self.final_mlp(points)  # [B * T, embed_dim]
 
+        # robot_state_obs should not be None based on function signature
+        if robot_state_obs is None:
+            raise ValueError("robot_state_obs cannot be None")
         nx = torch.cat([encoded_pcd, robot_state_obs], dim=1)
 
         if len(original_shape) == 4:  # [B, T, N, C]
