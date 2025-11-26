@@ -242,16 +242,16 @@ class PointNet2Backbone(nn.Module):
         if sa_configs is None:
             sa_configs = [
                 {
-                    "npoints": 1024,
-                    "radius": 0.04,
+                    "npoints": 512,
+                    "radius": 0.05,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
                     "in_channel": in_channels,
                 },
                 {
-                    "npoints": 256,
-                    "radius": 0.1,
-                    "nsample": 64,
+                    "npoints": 128,
+                    "radius": 0.12,
+                    "nsample": 32,
                     "mlp": [128, 128, 256],
                     "in_channel": 128+3,
                 },
@@ -311,14 +311,11 @@ class PointNet2Backbone(nn.Module):
         original_shape = pcd.shape
 
         # Flatten the batch and time dimensions
-        if len(pcd.shape) == 4:
-            pcd = pcd.float().reshape(-1, *pcd.shape[2:])  # (B * T, N, C)
-            if robot_state_obs is not None:
-                robot_state_obs = robot_state_obs.float().reshape(
-                    -1, *robot_state_obs.shape[2:]
-                )  # (B * T, 10)
-        else:
-            pcd = pcd.float()
+        pcd = pcd.float().reshape(-1, *pcd.shape[2:])  # (B * T, N, C)
+        if robot_state_obs is not None:
+            robot_state_obs = robot_state_obs.float().reshape(
+                -1, *robot_state_obs.shape[2:]
+            )  # (B * T, 10)
 
         # Separate xyz and features
         xyz = pcd[..., :3]
@@ -339,11 +336,7 @@ class PointNet2Backbone(nn.Module):
 
         encoded_pcd = self.final_mlp(points)  # [B * T, embed_dim]
 
-        # Concatenate with robot state
-        if robot_state_obs is not None:
-            nx = torch.cat([encoded_pcd, robot_state_obs], dim=1)
-        else:
-            nx = encoded_pcd
+        nx = torch.cat([encoded_pcd, robot_state_obs], dim=1)
 
         if len(original_shape) == 4:  # [B, T, N, C]
             nx = nx.reshape(B, -1)  # [B, T * embed_dim + 10]
