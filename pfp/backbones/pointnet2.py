@@ -103,7 +103,6 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
         torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
     )
     sqrdists = square_distance(new_xyz, xyz)
-    print(f"sqrdists shape: {sqrdists.shape}")
     group_idx[sqrdists > radius**2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
     # valid_points = (group_idx != N).sum(dim=-1)  # [B, S]
@@ -135,10 +134,8 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     """
     B, N, C = xyz.shape
     S = npoint
-    print(f"xyz shape: {xyz.shape}")
     fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint]
     new_xyz = index_points(xyz, fps_idx)
-    print(f"new_xyz shape: {new_xyz.shape}")
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
     grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
@@ -239,14 +236,11 @@ class PointNet2Backbone(nn.Module):
     def __init__(
         self,
         embed_dim: int,
-        input_channels: int,
         n_points: int = 4096,
         use_group_norm: bool = False,
         sa_configs: list[dict] = None,
     ):
         super().__init__()
-        assert input_channels in [3, 6], "Input channels must be 3 or 6"
-        in_channels = 6 if input_channels == 6 else 3
 
         # Default SA configs
         if sa_configs is None:
@@ -256,7 +250,7 @@ class PointNet2Backbone(nn.Module):
                     "radius": 0.08,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
-                    "in_channel": in_channels,
+                    "in_channel": 3,
                 },
                 {
                     "npoints": 128,
