@@ -112,11 +112,14 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     # print(f"Groups with 0 valid points: {(valid_points == 0).sum().item()}")
     # print(f"Groups with <{nsample} valid points: {(valid_points < nsample).sum().item()}")
     # print(f"Groups with =={nsample} valid points: {(valid_points == nsample).sum().item()}")
-    
 
-    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+    # --- Fallback to nearest point ---
+    # nn_idx: shape [B, S, 1]
+    _, nn_idx = torch.topk(sqrdists, 1, dim=-1, largest=False)
+    nn_idx = nn_idx.repeat(1, 1, nsample)  # repeat to fill nsample
+
     mask = group_idx == N
-    group_idx[mask] = group_first[mask]
+    group_idx[mask] = nn_idx[mask]
     return group_idx
 
 
@@ -257,14 +260,14 @@ class PointNet2Backbone(nn.Module):
                     "radius": 0.20,
                     "nsample": 64,
                     "mlp": [128, 128, 256],
-                    "in_channel": 128+3,
+                    "in_channel": 128 + 3,
                 },
                 {
                     "npoints": None,  # group all
                     "radius": None,
                     "nsample": None,
                     "mlp": [256, 512, 1024],
-                    "in_channel": 256+3,
+                    "in_channel": 256 + 3,
                 },
             ]
         self.sa_layers = nn.ModuleList()

@@ -28,7 +28,7 @@ dataset:
   n_points: 4096
 
 dataloader:
-  batch_size: 128
+  batch_size: 64
   num_workers: 0
   # pin_memory: True
 
@@ -46,4 +46,3 @@ lr_scheduler:
 defaults:
   - model: flow
   - backbone: pointnet
-

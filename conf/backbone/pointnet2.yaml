@@ -4,23 +4,19 @@ n_points: ${dataset.n_points}
 use_group_norm: False
 # Optional: customize SA layer configurations
 sa_configs:
-  - npoints: 1024  # 改为 npoints (复数)
-    radius: 0.08
-    nsample: 64
-    mlp: [64, 64, 128]
-    in_channel: 3
-  - npoints: 512  # 改为 npoints (复数)
-    radius: 0.10
-    nsample: 32
-    mlp: [128, 128, 256]
-    in_channel: 131
   - npoints: 256 # 改为 npoints (复数)
-    radius: 0.20
+    radius: 0.02
+    nsample: 16
+    mlp: [64, 64, 128]
+    in_channel: 131
+  - npoints: 64 # 改为 npoints (复数)
+    radius: 0.05
     nsample: 16
     mlp: [128, 128, 256]
-    in_channel: 259  # 添加 in_channel 字段（128+3，因为上一层输出128维特征+3维xyz）
-  - npoints: null  # 改为 npoints (复数)，group_all
+    in_channel: 131 # 添加 in_channel 字段（128+3，因为上一层输出128维特征+3维xyz）
+  - npoints: null # 改为 npoints (复数)，group_all
     radius: null
     nsample: null
     mlp: [256, 512, 1024]
-    in_channel: 259  # 添加 in_channel 字段（256+3，因为上一层输出256维特征+3维xyz）
+    in_channel: 259 # 添加 in_channel 字段（256+3，因为上一层输出256维特征+3维xyz）
+

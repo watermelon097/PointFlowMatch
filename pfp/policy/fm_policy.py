@@ -44,8 +44,8 @@ class FMPolicy(ComposerModel, BasePolicy):
         self.pos_emb_scale = pos_emb_scale
         self.num_k_infer = num_k_infer
         self.time_conditioning = time_conditioning
-        self.obs_encoder = obs_encoder # pcd encoder
-        self.diffusion_net = diffusion_net # velocity predictor
+        self.obs_encoder = obs_encoder  # pcd encoder
+        self.diffusion_net = diffusion_net  # velocity predictor
         self.norm_pcd_center = norm_pcd_center
         self.augment_data = augment_data
         self.noise_type = noise_type
@@ -95,7 +95,9 @@ class FMPolicy(ComposerModel, BasePolicy):
         robot_state_pred = self._norm_robot_state(robot_state_pred)
         return pcd, robot_state_obs, robot_state_pred
 
-    def _augment_data(self, batch: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
+    def _augment_data(
+        self, batch: tuple[torch.Tensor, ...]
+    ) -> tuple[torch.Tensor, ...]:
         return augment_pcd_data(batch)
 
     def _init_noise(self, batch_size: int) -> torch.Tensor:
@@ -111,7 +113,13 @@ class FMPolicy(ComposerModel, BasePolicy):
             noise_rot = pp.randn_SO3((B, T), device=DEVICE).matrix()
             noise_gripper = torch.randn((B, T, 1), device=DEVICE)
             noise = torch.cat(
-                [noise_pos, noise_rot[..., :3, 0], noise_rot[..., :3, 1], noise_gripper], dim=-1
+                [
+                    noise_pos,
+                    noise_rot[..., :3, 0],
+                    noise_rot[..., :3, 1],
+                    noise_gripper,
+                ],
+                dim=-1,
             )
             return noise
         else:
@@ -159,7 +167,10 @@ class FMPolicy(ComposerModel, BasePolicy):
         return loss
 
     def calculate_loss(
-        self, pcd: torch.Tensor, robot_state_obs: torch.Tensor, robot_state_pred: torch.Tensor
+        self,
+        pcd: torch.Tensor,
+        robot_state_obs: torch.Tensor,
+        robot_state_pred: torch.Tensor,
     ):
         nx: torch.Tensor = self.obs_encoder(pcd, robot_state_obs)
         ny: torch.Tensor = robot_state_pred
@@ -179,7 +190,9 @@ class FMPolicy(ComposerModel, BasePolicy):
 
     # ############### Inference ################
 
-    def eval_forward(self, batch: tuple[torch.Tensor, ...], outputs=None) -> torch.Tensor:
+    def eval_forward(
+        self, batch: tuple[torch.Tensor, ...], outputs=None
+    ) -> torch.Tensor:
         """
         batch: the output of the eval dataloader
         outputs: the output of the forward pass
@@ -230,7 +243,9 @@ class FMPolicy(ComposerModel, BasePolicy):
         B = nx.shape[0]
         z = self._init_noise(B) if noise is None else noise
         traj = [z]
-        t0, dt = get_timesteps(self.flow_schedule, self.num_k_infer, exp_scale=self.exp_scale)
+        t0, dt = get_timesteps(
+            self.flow_schedule, self.num_k_infer, exp_scale=self.exp_scale
+        )
         for i in range(self.num_k_infer):
             timesteps = torch.ones((B), device=DEVICE) * t0[i]
             timesteps *= self.pos_emb_scale
@@ -254,8 +269,12 @@ class FMPolicy(ComposerModel, BasePolicy):
     ):
         ckpt_dir = REPO_DIRS.CKPT / ckpt_name
         ckpt_path_list = list(ckpt_dir.glob(f"{ckpt_episode}*"))
-        assert len(ckpt_path_list) > 0, f"No checkpoint found in {ckpt_dir} with {ckpt_episode}"
-        assert len(ckpt_path_list) < 2, f"Multiple ckpts found in {ckpt_dir} with {ckpt_episode}"
+        assert len(ckpt_path_list) > 0, (
+            f"No checkpoint found in {ckpt_dir} with {ckpt_episode}"
+        )
+        assert len(ckpt_path_list) < 2, (
+            f"Multiple ckpts found in {ckpt_dir} with {ckpt_episode}"
+        )
         ckpt_fpath = ckpt_path_list[0]
 
         state_dict = torch.load(ckpt_fpath, map_location=DEVICE, weights_only=False)
@@ -275,7 +294,6 @@ class FMPolicy(ComposerModel, BasePolicy):
 
 
 class FMPolicyImage(FMPolicy):
-
     def _norm_obs(self, image: torch.Tensor) -> torch.Tensor:
         """
         Image normalization is already done in the backbone, so here we just make it float
@@ -283,5 +301,7 @@ class FMPolicyImage(FMPolicy):
         image = image.float() / 255.0
         return image
 
-    def _augment_data(self, batch: tuple[torch.Tensor, ...]) -> tuple[torch.Tensor, ...]:
+    def _augment_data(
+        self, batch: tuple[torch.Tensor, ...]
+    ) -> tuple[torch.Tensor, ...]:
         raise NotImplementedError
