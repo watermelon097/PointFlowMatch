@@ -8,7 +8,7 @@ sa_configs:
     radius: 0.02
     nsample: 16
     mlp: [64, 64, 128]
-    in_channel: 131
+    in_channel: 3
   - npoints: 64 # 改为 npoints (复数)
     radius: 0.05
     nsample: 16
