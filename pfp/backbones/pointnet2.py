@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from pytorch3d.ops import sample_farthest_points, ball_query
+
 
 
 def pc_normalize(pc):
@@ -37,7 +39,7 @@ def square_distance(src, dst):
     return dist
 
 
-def farthest_point_sample(xyz, npoint):
+def old_farthest_point_sample(xyz, npoint):
     """
     Input:
         xyz: pointcloud data, [B, N, 3]
@@ -86,7 +88,7 @@ def index_points(points, idx):
     return new_points
 
 
-def query_ball_point(radius, nsample, xyz, new_xyz):
+def old_query_ball_point(radius, nsample, xyz, new_xyz):
     """
     Input:
         radius: local region radius
@@ -137,11 +139,11 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     """
     B, N, C = xyz.shape
     S = npoint
-    fps_idx = farthest_point_sample(xyz, npoint)  # [B, npoint]
-    new_xyz = index_points(xyz, fps_idx)
-    idx = query_ball_point(radius, nsample, xyz, new_xyz)
-    grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
-    grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
+    new_xyz, fps_idx = sample_farthest_points(xyz, K=npoint)  # [B, npoint, C]
+    _, idx, grouped_xyz = ball_query(new_xyz, xyz, K=nsample, radius=radius, return_nn=True)  # [B, npoint, nsample]
+    # grouped_xyz shape: [B, npoint, nsample, 3]
+    # Normalize grouped_xyz relative to new_xyz (center at new_xyz)
+    grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)  # [B, npoint, nsample, 3]
     if points is not None:
         grouped_points = index_points(points, idx)
         new_points = torch.cat(
@@ -168,7 +170,7 @@ def sample_and_group_all(xyz: torch.Tensor, points: torch.Tensor):
     """
     device = xyz.device
     B, N, C = xyz.shape
-    new_xyz = xyz.mean(dim=1, keepdim=True)
+    new_xyz = torch.zeros(B, 1, C).to(device)
     grouped_xyz = xyz.view(B, 1, N, C)
     if points is not None:
         grouped_points = points.view(B, 1, N, -1)
@@ -187,6 +189,7 @@ class PointNetSetAbstractor(nn.Module):
         in_channels: int,
         mlp: list,
         group_all: bool,
+        bn = False,
     ):
         super().__init__()
         self.npoints = npoints
@@ -195,12 +198,18 @@ class PointNetSetAbstractor(nn.Module):
         self.mlp_convs = nn.ModuleList()
         self.mlp_bns = nn.ModuleList()
         self.group_all = group_all
+        self.bn = bn
         last_channel = in_channels
         for out_channel in mlp:
             self.mlp_convs.append(nn.Conv2d(last_channel, out_channel, 1))
             self.mlp_bns.append(nn.BatchNorm2d(out_channel))
             last_channel = out_channel
 
+        if nsample is not None:
+            self.max_pool = nn.MaxPool2d((nsample, 1))
+        else:
+            self.max_pool = None
+        self.identity = nn.Identity()
     def forward(
         self,
         xyz: torch.Tensor,
@@ -226,12 +235,20 @@ class PointNetSetAbstractor(nn.Module):
             )
         # new_xyz: sampled points position data, [B, npoints, C]
         # new_points: sampled points data, [B, npoints, nsample, D+C]
-        new_points = new_points.permute(0, 3, 1, 2)  # [B, D+C, npoints, nsample]
+        new_points = new_points.permute(0, 3, 2, 1)  # [B, D+C, nsample, npoints]
         for i, conv in enumerate(self.mlp_convs):
-            bn = self.mlp_bns[i]
-            new_points = F.relu(bn(conv(new_points)))
-        new_points = torch.max(new_points, 3)[0]
+            if self.bn:
+                bn = self.mlp_bns[i]
+                new_points = F.relu(bn(conv(new_points)))
+            else:
+                new_points = F.relu(conv(new_points)) # [B, C+D, nsample, npoints]
+        
+        if self.max_pool is not None:
+            new_points = self.max_pool(new_points)[:,:,0]
+        else:
+            new_points = torch.max(new_points, 2)[0]
         new_points = new_points.permute(0, 2, 1)
+        new_points = self.identity(new_points)
         return new_xyz, new_points
 
 
@@ -250,7 +267,7 @@ class PointNet2Backbone(nn.Module):
             sa_configs = [
                 {
                     "npoints": 512,
-                    "radius": 0.08,
+                    "radius": 0.06,
                     "nsample": 32,
                     "mlp": [64, 64, 128],
                     "in_channel": 3,
@@ -302,6 +319,7 @@ class PointNet2Backbone(nn.Module):
         self.final_mlp = nn.Sequential(
             nn.Linear(1024, 512),
             nn.Mish(),
+            nn.Dropout(0.4),
             nn.Linear(512, embed_dim),
         )
 
