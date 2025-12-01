@@ -170,13 +170,14 @@ def sample_and_group_all(xyz: torch.Tensor, points: torch.Tensor):
     """
     device = xyz.device
     B, N, C = xyz.shape
-    new_xyz = torch.zeros(B, 1, C).to(device)
+    new_xyz = xyz.mean(dim=1, keepdim=True)
     grouped_xyz = xyz.view(B, 1, N, C)
+    grouped_xyz_norm = grouped_xyz - new_xyz.view(B, 1, 1, C)
     if points is not None:
         grouped_points = points.view(B, 1, N, -1)
-        new_points = torch.cat([grouped_xyz, grouped_points], dim=-1)
+        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1)
     else:
-        new_points = grouped_xyz
+        new_points = grouped_xyz_norm   
     return new_xyz, new_points
 
 
@@ -189,7 +190,7 @@ class PointNetSetAbstractor(nn.Module):
         in_channels: int,
         mlp: list,
         group_all: bool,
-        bn = False,
+        bn = True,
     ):
         super().__init__()
         self.npoints = npoints
@@ -205,11 +206,6 @@ class PointNetSetAbstractor(nn.Module):
             self.mlp_bns.append(nn.BatchNorm2d(out_channel))
             last_channel = out_channel
 
-        if nsample is not None:
-            self.max_pool = nn.MaxPool2d((nsample, 1))
-        else:
-            self.max_pool = None
-        self.identity = nn.Identity()
     def forward(
         self,
         xyz: torch.Tensor,
@@ -243,12 +239,9 @@ class PointNetSetAbstractor(nn.Module):
             else:
                 new_points = F.relu(conv(new_points)) # [B, C+D, nsample, npoints]
         
-        if self.max_pool is not None:
-            new_points = self.max_pool(new_points)[:,:,0]
-        else:
-            new_points = torch.max(new_points, 2)[0]
+
+        new_points = torch.max(new_points, 2)[0]
         new_points = new_points.permute(0, 2, 1)
-        new_points = self.identity(new_points)
         return new_xyz, new_points
 
 
@@ -318,8 +311,8 @@ class PointNet2Backbone(nn.Module):
 
         self.final_mlp = nn.Sequential(
             nn.Linear(1024, 512),
-            nn.Mish(),
-            nn.Dropout(0.4),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(512, embed_dim),
         )
 
@@ -348,6 +341,8 @@ class PointNet2Backbone(nn.Module):
         else:
             points = None
 
+        # Normalize xyz
+        xyz = xyz - xyz.mean(dim=1, keepdim=True)
         # Pass through SA layers
         for sa_layer in self.sa_layers:
             xyz, points = sa_layer(xyz, points)
