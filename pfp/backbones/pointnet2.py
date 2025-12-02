@@ -202,8 +202,16 @@ class PointNetSetAbstractor(nn.Module):
         self.bn = bn
         last_channel = in_channels
         for out_channel in mlp:
+            # 1. 坚持使用 Conv2d 以获得最快速度
             self.mlp_convs.append(nn.Conv2d(last_channel, out_channel, 1))
-            self.mlp_bns.append(nn.BatchNorm2d(out_channel))
+            
+            if self.bn:
+                # 2. 使用 GroupNorm 替代 BatchNorm/LayerNorm
+                # num_groups=1 时，数学上完全等价于 LayerNorm
+                # num_groups=32 是 GroupNorm 论文推荐的默认值，通常比 LayerNorm 效果还好一点
+                # 这里为了模拟 LayerNorm，我们设 groups=1
+                self.mlp_bns.append(nn.GroupNorm(num_groups=1, num_channels=out_channel))
+            
             last_channel = out_channel
 
     def forward(
