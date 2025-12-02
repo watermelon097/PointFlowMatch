@@ -170,7 +170,7 @@ def sample_and_group_all(xyz: torch.Tensor, points: torch.Tensor):
     """
     device = xyz.device
     B, N, C = xyz.shape
-    new_xyz = xyz.mean(dim=1, keepdim=True)
+    new_xyz = torch.zeros(B, 1, C).to(device) # mean of xyz
     grouped_xyz = xyz.view(B, 1, N, C)
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, 1, 1, C)
     if points is not None:
@@ -190,7 +190,7 @@ class PointNetSetAbstractor(nn.Module):
         in_channels: int,
         mlp: list,
         group_all: bool,
-        bn = True,
+        bn = False,
     ):
         super().__init__()
         self.npoints = npoints
@@ -202,16 +202,8 @@ class PointNetSetAbstractor(nn.Module):
         self.bn = bn
         last_channel = in_channels
         for out_channel in mlp:
-            # 1. 坚持使用 Conv2d 以获得最快速度
             self.mlp_convs.append(nn.Conv2d(last_channel, out_channel, 1))
-            
-            if self.bn:
-                # 2. 使用 GroupNorm 替代 BatchNorm/LayerNorm
-                # num_groups=1 时，数学上完全等价于 LayerNorm
-                # num_groups=32 是 GroupNorm 论文推荐的默认值，通常比 LayerNorm 效果还好一点
-                # 这里为了模拟 LayerNorm，我们设 groups=1
-                self.mlp_bns.append(nn.GroupNorm(num_groups=1, num_channels=out_channel))
-            
+            self.mlp_bns.append(nn.BatchNorm2d(out_channel))
             last_channel = out_channel
 
     def forward(
@@ -320,7 +312,6 @@ class PointNet2Backbone(nn.Module):
         self.final_mlp = nn.Sequential(
             nn.Linear(1024, 512),
             nn.ReLU(),
-            nn.Dropout(0.2),
             nn.Linear(512, embed_dim),
         )
 
@@ -349,8 +340,7 @@ class PointNet2Backbone(nn.Module):
         else:
             points = None
 
-        # Normalize xyz
-        xyz = xyz - xyz.mean(dim=1, keepdim=True)
+
         # Pass through SA layers
         for sa_layer in self.sa_layers:
             xyz, points = sa_layer(xyz, points)
