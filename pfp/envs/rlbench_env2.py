@@ -1,4 +1,5 @@
 import time
+from scipy.spatial import cKDTree
 import numpy as np
 import open3d as o3d
 import spatialmath.base as sm
@@ -16,6 +17,7 @@ from rlbench.utils import name_to_task_class
 from pfp.common.visualization import RerunViewer as RV
 from pfp.common.o3d_utils import make_pcd, merge_pcds
 from pfp.common.se3_utils import rot6d_to_quat_np, pfp_to_pose_np
+from pfp.common.fm_utils import fps_numpy
 
 try:
     import rerun as rr
@@ -42,9 +44,9 @@ class RLBenchEnv(BaseEnv):
         use_pc_color: bool,
         headless: bool,
         vis: bool,
-        obs_mode: str = "pcd",
+        obs_mode: str = "pcd_with_idx",
     ):
-        assert obs_mode in ["pcd", "rgb"], "Invalid obs_mode"
+        assert obs_mode in ["pcd", "rgb", "pcd_with_idx"], "Invalid obs_mode"
         self.obs_mode = obs_mode
         # image_size=(128, 128)
         self.voxel_size = voxel_size
@@ -143,11 +145,10 @@ class RLBenchEnv(BaseEnv):
             obs = pcd
         elif self.obs_mode == "rgb":
             obs = self.get_images(obs_rlbench)
-        # 多模态
-        elif self.obs_mode == "pcd_rgb":
+        elif self.obs_mode == "pcd_with_idx":
+            pcd, pixel_idx, map_idx = self.get_pcd_with_idx(obs_rlbench)
             images = self.get_images(obs_rlbench)
-            pcd 
-
+            obs = (pcd, images, pixel_idx, map_idx)
         return robot_state, obs
 
     def get_robot_state(self, obs: Observation) -> np.ndarray:
@@ -155,122 +156,118 @@ class RLBenchEnv(BaseEnv):
         ee_rot6d = obs.gripper_matrix[:3, :2].flatten(order="F")
         gripper = np.array([obs.gripper_open])
         robot_state = np.concatenate([ee_position, ee_rot6d, gripper])
-        points, colors, pixels, cam_ids = self._filter_workspace_points(xyz_maps, rgb_maps)
-        return self._downsample_points(points, colors, pixels, cam_ids)
+        return robot_state
 
-    def _collect_camera_maps(self, obs: Observation) -> tuple[np.ndarray, np.ndarray]:
-        xyz_maps = np.stack(
-            [
-            obs.right_shoulder_point_cloud,
-            obs.left_shoulder_point_cloud,
-            obs.overhead_point_cloud,
-            obs.front_point_cloud,
-            obs.wrist_point_cloud,
-            ],
-                axis=0,
-        )
-        rgb_maps = np.stack(
-            [
-            obs.right_shoulder_rgb,
-            obs.left_shoulder_rgb,
-            obs.overhead_rgb,
-            obs.front_rgb,
-            obs.wrist_rgb,
-            ],
-            axis=0,
-        ).astype(np.float32) / 255.0
-        return xyz_maps, rgb_maps
+    def get_pcd(self, obs: Observation) -> o3d.geometry.PointCloud:
+        right_pcd = make_pcd(obs.right_shoulder_point_cloud, obs.right_shoulder_rgb)
+        left_pcd = make_pcd(obs.left_shoulder_point_cloud, obs.left_shoulder_rgb)
+        overhead_pcd = make_pcd(obs.overhead_point_cloud, obs.overhead_rgb)
+        front_pcd = make_pcd(obs.front_point_cloud, obs.front_rgb)
+        wrist_pcd = make_pcd(obs.wrist_point_cloud, obs.wrist_rgb)
+        pcd_list = [right_pcd, left_pcd, overhead_pcd, front_pcd, wrist_pcd]
+        pcd = merge_pcds(pcd_list, self.voxel_size, self.n_points, self.ws_aabb)
+        return pcd
+    
+
+    def get_pcd_with_idx(self, obs: Observation) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Get point cloud from all pt maps.
         
-    def _filter_workspace_points(
-        self,
-        xyz_maps: np.ndarray,
-        rgb_maps: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        num_maps, H, W, _ = xyz_maps.shape
-        points, colors, pixels, cam_ids = [], [], [], []
-        for m in range(num_maps):
-            flat_xyz = xyz_maps[m].reshape(-1, 3)
-            flat_rgb = rgb_maps[m].reshape(-1, 3)
-            inside_idx = self.ws_aabb.get_point_indices_within_bounding_box(
-                o3d.utility.Vector3dVector(flat_xyz)
+        Returns:
+            pcd: (N, 3) - Point cloud
+            pixel_idx: (N, 2) - Pixel indices
+            map_idx: (N, 1) - Map indices
+        """
+        right_pt_map = obs.right_shoulder_point_cloud
+        left_pt_map = obs.left_shoulder_point_cloud
+        overhead_pt_map = obs.overhead_point_cloud
+        front_pt_map = obs.front_point_cloud
+        wrist_pt_map = obs.wrist_point_cloud
+        pt_maps = np.stack((right_pt_map, left_pt_map, overhead_pt_map, front_pt_map, wrist_pt_map))
+        mask_list = []
+        
+        num_maps, H, W, _ = pt_maps.shape
+        points_all = []
+        pixel_idx_all = []
+        map_idx_all = []
+        for m, pt_map in enumerate(pt_maps):
+            pt_flat = pt_map.reshape(-1, 3)
+            inside_mask = self.ws_aabb.get_point_indices_within_bounding_box(
+                o3d.utility.Vector3dVector(pt_flat)
             )
-            if not inside_idx:
+            mask_flat = np.zeros(pt_flat.shape[0], dtype=bool)
+            mask_flat[inside_mask] = True
+
+            # [x,3], x number of points inside the bbox
+            pts_filtered = pt_flat[inside_mask]
+            if pts_filtered.shape[0] == 0:
                 continue
-            mask = np.zeros(flat_xyz.shape[0], dtype=bool)
-            mask[inside_idx] = True
-            ii, jj = np.where(mask.reshape(H, W))
-            points.append(flat_xyz[inside_idx])
-            colors.append(flat_rgb[inside_idx])
-            pixels.append(np.stack([ii, jj], axis=1).astype(np.int32))
-            cam_ids.append(np.full(ii.shape, m))
-        if not points:
-            raise ValueError("No points inside the workspace")
-        return(
-            np.concatenate(points, axis=0),
-            np.concatenate(colors, axis=0),
-            np.concatenate(pixels, axis=0),
-            np.concatenate(cam_ids, axis=0),
-        )
-    def _downsample_with_indices(
-        self,
-        points: np.ndarray,
-        colors: np.ndarray,
-        pixels: np.ndarray,
-        cam_ids: np.ndarray,
-    ) -> tuple[o3d.geometry.PointCloud, np.ndarray, np.ndarray]:
-        pcd_full = o3d.geometry.PointCloud()
-        pcd_full.points = o3d.utility.Vector3dVector(points)
-        pcd_full.colors = o3d.utility.Vector3dVector(colors)
-        pcd_voxel = pcd_full.voxel_down_sample(self.voxel_size)
-        pts_down = np.asarray(pcd_voxel.points)
-        if pts_down.shape[0] == 0:
-            pts_down = points
-            cols_down = colors
-            pix_down = pixels
-            cams_down = cam_ids
-        else:
-            nn_tree = cKDTree(points)
-            _, idx = nn_tree.query(pts_down, k=1)
-            cols_down = colors[idx]
-            pix_down = pixels[idx]
-            cams_down = cam_ids[idx]
-        if pts_down.shape[0] > self.n_points:
-            fps = o3d.geometry.PointCloud()
-            fps.points = o3d.utility.Vector3dVector(pts_down)
-            pts_target = np.asarray(fps.farthest_point_down_sample(self.n_points).points)
-            voxel_tree = cKDTree(pts_down)
-            _, idx = voxel_tree.query(pts_target, k=1)
-            pts_down, cols_down = pts_down[idx], cols_down[idx]
-            pix_down, cams_down = pix_down[idx], cams_down[idx]
-        elif pts_down.shape[0] < self.n_points:
-            diff = self.n_points - pts_down.shape[0]
-            repl = points.shape[0] < diff
-            extra = np.random.choice(points.shape[0], diff, replace=repl)
-            pts_down = np.concatenate([pts_down, points[extra]], axis=0)
-            cols_down = np.concatenate([cols_down, colors[extra]], axis=0)
-            pix_down = np.concatenate([pix_down, pixels[extra]], axis=0)
-            cams_down = np.concatenate([cams_down, cam_ids[extra]], axis=0)
-        final_pcd = o3d.geometry.PointCloud()
-        final_pcd.points = o3d.utility.Vector3dVector(pts_down)
-        final_pcd.colors = o3d.utility.Vector3dVector(cols_down)
-        return final_pcd, pix_down, cams_down
+            points_all.append(pts_filtered)
 
-    def get_pcd(self, obs: Observation, save_pos: bool= False) -> o3d.geometry.PointCloud:
-        # if save_pos return the u,v position and which camera image of point cloud.
-        if not save_pos:
-            cams = (
-                (obs.right_shoulder_point_cloud, obs.right_shoulder_rgb),
-                (obs.left_shoulder_point_cloud, obs.left_shoulder_rgb),
-                (obs.overhead_point_cloud, obs.overhead_rgb),
-                (obs.front_point_cloud, obs.front_rgb),
-                (obs.wrist_point_cloud, obs.wrist_rgb),
-            ) 
-            pcds = [make_pcd(pcd, rgb) for pcd, rgb in cams]
-            return merge_pcds(self.voxel_size, self.n_points, pcds, self.ws_aabb)
-        xyz_maps, rgb_maps = self._collect_camera_maps(obs)
-        points, colors, pixels, cam_ids = self._filter_workspace_points(xyz_maps, rgb_maps)
-        return self._downsample_with_indices(points, colors, pixels, cam_ids)
+            # save corresponding pixel position
+            ii, jj = np.where(mask_flat.reshape(H, W))
+            pixel_idx_all.append(np.stack([ii, jj], axis=1))
+            map_idx_all.append(np.full(ii.shape, m))
 
+        if len(points_all) == 0:
+            raise ValueError("No points inside the bbox")
+        points_all = np.concatenate(points_all, axis=0)
+        pixel_idx_all = np.concatenate(pixel_idx_all, axis=0)
+        map_idx_all = np.concatenate(map_idx_all, axis=0)
+
+        # Voxel downsample points
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(points_all)
+        pcd_down = pcd.voxel_down_sample(self.voxel_size)
+        points_down = np.asarray(pcd_down.points)
+
+        tree= cKDTree(points_all)
+        _, idx = tree.query(points_down, k=1)
+        pixel_idx_down = pixel_idx_all[idx]
+        map_idx_down = map_idx_all[idx]
+
+        # FPS downsample to self.n_points
+        if points_down.shape[0] > self.n_points:
+            pcd_fps = o3d.geometry.PointCloud()
+            pcd_fps.points = o3d.utility.Vector3dVector(points_down)
+            downsampled = pcd_fps.farthest_point_down_sample(self.n_points)
+            points_down_fps = np.asarray(downsampled.points)
+            tree_voxel = cKDTree(points_down)
+            _, idx_fps = tree_voxel.query(points_down_fps, k=1)
+            pixel_idx_down = pixel_idx_down[idx_fps]
+            map_idx_down = map_idx_down[idx_fps]
+            points_down = points_down[idx_fps]
+
+        if points_down.shape[0] < self.n_points:
+            diff = self.n_points - points_down.shape[0]
+            idx = np.random.choice(points_all.shape[0], diff, replace=False) 
+            points_down = np.concatenate([points_down, points_all[idx]], axis=0)
+            pixel_idx_down = np.concatenate([pixel_idx_down, pixel_idx_all[idx]], axis=0)
+            map_idx_down = np.concatenate([map_idx_down, map_idx_all[idx]], axis=0)
+    
+        # restored_masks = np.zeros((num_maps, H, W), dtype=bool)
+        # for pix, m in zip(pixel_idx_down, map_idx_down):
+        #     i, j = pix
+        #     restored_masks[m, i, j] = True
+        # print(f"point cloud shape: {points_down.shape}")
+        # print(f"restored masks shape: {restored_masks.shape}")
+        return points_down, pixel_idx_down, map_idx_down
+
+    def merge_pt_maps(self, pt_maps: np.ndarray, mask_list: np.ndarray) -> o3d.geometry.PointCloud:
+        """
+        Merge point maps from all cameras into a single point cloud.
+        
+        Args:
+            pt_maps: (5, H, W, 3) - Point clouds from 5 cameras
+            mask_list: (5, H*W) - Optional boolean masks, True for points to include
+        
+        Returns:
+            Merged point cloud (filtered by bbox, downsampled, etc.)
+        """
+        pcd_list = [o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pt_map[mask])) for pt_map, mask in zip(pt_maps, mask_list)]
+        merged_pcd = merge_pcds(pcd_list)
+        return merged_pcd
+    
     def get_images(self, obs: Observation) -> np.ndarray:
         images = np.stack(
             (
@@ -295,21 +292,40 @@ class RLBenchEnv(BaseEnv):
         )
         return depths
 
-    def vis_step(self, robot_state: np.ndarray, obs: np.ndarray, prediction: np.ndarray = None):
+    def vis_step(
+        self, 
+        robot_state: np.ndarray, 
+        obs: np.ndarray, 
+        prediction: np.ndarray = None,
+    ):
         """
         robot_state: the current robot state (10,)
-        obs: either pcd or images
+        obs: either pcd, images or pt_maps
             - pcd: the current point cloud (N, 6) or (N, 3)
             - images: the current images (5, H, W, 3)
+            - pt_maps: (5, H, W, 3) - Point maps from all cameras
         prediction: the full trajectory of robot states (T, 10)
+        mask_list: (5, H*W) - Masks for point maps
         """
         VIS_FLOW = False
         if not self.vis:
             return
         rr.set_time_seconds("time", time.time())
 
-        # Point cloud
-        if self.obs_mode == "pcd":
+        # If point maps are provided, visualize merged point cloud from them
+        if self.obs_mode == "pcd_with_idx":
+            pcd, img, pixel_idx, map_idx = obs
+            # Vectorized color sampling from multi-view images
+            rows = pixel_idx[:, 0]
+            cols = pixel_idx[:, 1]
+            pcd_color = img[map_idx, rows, cols].astype(np.uint8) # [N_points, 3], uint8 RGB
+           
+            RV.add_np_pointcloud("vis/pcd_obs", points=pcd, colors_uint8=pcd_color, radii=0.003)
+            for i, img in enumerate(img):
+                RV.add_rgb(f"vis/rgb_obs_{i}", img)
+
+        elif self.obs_mode == "pcd":
+            # It's a point cloud
             pcd = obs
             pcd_xyz = pcd[:, :3]
             pcd_color = (pcd[:, 3:6] * 255).astype(np.uint8) if self.use_pc_color else None
