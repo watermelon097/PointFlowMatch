@@ -71,6 +71,7 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
         use_pc_color: bool,
         n_points: int,
         subs_factor: int = 1,  # 1 means no subsampling
+        **kwargs,  # Accept additional kwargs for compatibility
     ) -> None:
         """
         Args:
@@ -142,7 +143,7 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
         
         # Randomly subsample points if too many
         if pcd.shape[1] > self.n_points:
-            random_indices = np.random.choice(pcd.shape[1], self.n_points, replace=False)
+            random_indices = self.rng.choice(pcd.shape[1], self.n_points, replace=False)
             pcd = pcd[:, random_indices]
         
         return pcd, robot_state_obs, robot_state_pred
@@ -150,7 +151,17 @@ class RobotDatasetPcd(torch.utils.data.Dataset):
 
 class RobotDatasetPixelAlignedPcd(torch.utils.data.Dataset):
     """
-    Dataset that keeps track of per-point pixel indices and source camera ids.
+    PyTorch dataset for pixel-aligned point cloud-based robot manipulation sequences.
+    Keeps track of per-point pixel indices and source camera ids for pixel-level feature alignment.
+    
+    Returns:
+        pcd: (T_obs, N_points, 3) - Point clouds
+        pixel_idx: (T_obs, N_points, 2) - Pixel indices [u, v] for each point
+        map_idx: (T_obs, N_points) - Camera/source map index for each point
+        images: (T_obs, N_cam, H, W, 3) - RGB images from cameras
+        robot_state_obs: (T_obs, 10) - Observed robot states [pos(3), rot6d(6), gripper(1)]
+        robot_state_pred: (T_pred, 10) - Future robot states to predict
+        dinov3_features: (T_obs, N_cam, feat_dim) - Optional DINOv3 features if return_dinov3_features=True
     """
 
     def __init__(
@@ -169,7 +180,26 @@ class RobotDatasetPixelAlignedPcd(torch.utils.data.Dataset):
         dinov3_feature_cache_dir: str | Path | None = None,
         return_dinov3_features: bool = False,
         dinov3_batch_size: int = 32,
-    ):
+        **kwargs,  # Accept additional kwargs for compatibility
+    ) -> None:
+        """
+        Args:
+            data_path: Path to replay buffer directory
+            n_obs_steps: Number of observation timesteps (T_obs)
+            n_pred_steps: Number of prediction timesteps (T_pred)
+            subs_factor: Temporal subsampling factor (1 = no subsampling)
+            use_pc_color: If True, include RGB colors (currently not used in this dataset)
+            n_points: Maximum number of points to sample from point cloud
+            dinov3_repo_root: Path to DINOv3 repository root (for loading model)
+            dinov3_weights_path: Path to DINOv3 model weights
+            dinov3_model_name: Name of DINOv3 model to load
+            dinov3_device: Device to run DINOv3 model on
+            dinov3_image_size: Target image size for DINOv3 preprocessing
+            dinov3_feature_cache_dir: Directory to cache DINOv3 features
+            return_dinov3_features: If True, return DINOv3 features in __getitem__
+            dinov3_batch_size: Batch size for DINOv3 feature computation
+            **kwargs: Additional arguments for compatibility with other datasets
+        """
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
         data_keys = ["robot_state", "pcd", "pixel_idx", "map_idx", "images"]
         data_key_first_k = {
@@ -192,6 +222,7 @@ class RobotDatasetPixelAlignedPcd(torch.utils.data.Dataset):
         self.n_points = n_points
         self.return_dinov3_features = return_dinov3_features
         self.dinov3_batch_size = dinov3_batch_size
+        self.rng = np.random.default_rng()  # Add rng for compatibility with other datasets
 
         self.dinov3_cache_dir = (
             Path(dinov3_feature_cache_dir).expanduser().resolve()
@@ -219,6 +250,18 @@ class RobotDatasetPixelAlignedPcd(torch.utils.data.Dataset):
         return len(self.sampler)
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, ...]:
+        """
+        Get a single training sample.
+        
+        Returns:
+            pcd: (T_obs, N_points, 3) - Point cloud observations
+            pixel_idx: (T_obs, N_points, 2) - Pixel indices for each point
+            map_idx: (T_obs, N_points) - Camera map indices for each point
+            images: (T_obs, N_cam, H, W, 3) - RGB images from cameras
+            robot_state_obs: (T_obs, 10) - Observed robot states
+            robot_state_pred: (T_pred, 10) - Future robot states to predict
+            dinov3_features: (T_obs, N_cam, feat_dim) - Optional DINOv3 features
+        """
         sample: dict[str, np.ndarray] = self.sampler.sample_sequence(idx)
         cur_step_i = self.n_obs_steps * self.subs_factor
         pcd = sample["pcd"][: cur_step_i : self.subs_factor]
@@ -233,7 +276,7 @@ class RobotDatasetPixelAlignedPcd(torch.utils.data.Dataset):
             dinov3_features = self._get_or_compute_dinov3(idx, images)
 
         if pcd.shape[1] > self.n_points:
-            random_indices = np.random.choice(pcd.shape[1], self.n_points, replace=False)
+            random_indices = self.rng.choice(pcd.shape[1], self.n_points, replace=False)
             pcd = pcd[:, random_indices]
             pixel_idx = pixel_idx[:, random_indices]
             map_idx = map_idx[:, random_indices]

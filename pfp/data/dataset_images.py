@@ -63,6 +63,7 @@ class RobotDatasetRGBD(torch.utils.data.Dataset):
         n_obs_steps: int,
         n_pred_steps: int,
         subs_factor: int = 1,  # 1 means no subsampling
+        **kwargs,  # Accept additional kwargs for compatibility
     ) -> None:
         replay_buffer = RobotReplayBuffer.create_from_path(data_path, mode="r")
         data_keys = ["robot_state", "images", "depths"]
@@ -81,6 +82,7 @@ class RobotDatasetRGBD(torch.utils.data.Dataset):
         self.n_obs_steps = n_obs_steps
         self.n_prediction_steps = n_pred_steps
         self.subs_factor = subs_factor
+        self.rng = np.random.default_rng()  # Add rng for compatibility with other datasets
         return
 
     def __len__(self) -> int:

@@ -2,6 +2,7 @@ import time
 import numpy as np
 import open3d as o3d
 import spatialmath.base as sm
+import torch
 from pyrep.const import RenderMode
 from pfp.envs.base_env import BaseEnv
 from pyrep.errors import IKError
@@ -16,6 +17,7 @@ from rlbench.utils import name_to_task_class
 from pfp.common.visualization import RerunViewer as RV
 from pfp.common.o3d_utils import make_pcd, merge_pcds
 from pfp.common.se3_utils import rot6d_to_quat_np, pfp_to_pose_np
+from pytorch3d.ops import sample_farthest_points
 
 try:
     import rerun as rr
@@ -43,6 +45,7 @@ class RLBenchEnv(BaseEnv):
         headless: bool,
         vis: bool,
         obs_mode: str = "pcd",
+        device: str = 'cuda'
     ):
         assert obs_mode in ["pcd", "rgb"], "Invalid obs_mode"
         self.obs_mode = obs_mode
@@ -79,9 +82,12 @@ class RLBenchEnv(BaseEnv):
         self.env.launch()
         self.task = self.env.get_task(name_to_task_class(task_name))
         self.robot_position = self.env._robot.arm.get_position()
+        self.min_bound = torch.tensor([self.robot_position[0] + 0.1, -0.65, self.robot_position[2] - 0.05], 
+                                      device=device, dtype=torch.float32)
+        self.max_bound = torch.tensor([1, 0.65, 2], device=device, dtype=torch.float32)
         self.ws_aabb = o3d.geometry.AxisAlignedBoundingBox(
-            min_bound=(self.robot_position[0] + 0.1, -0.65, self.robot_position[2] - 0.05),
-            max_bound=(1, 0.65, 2),
+            min_bound=self.min_bound,
+            max_bound=self.max_bound,
         )
         self.vis = vis #True use RerunViewer to visualize the environment, False: no visualization
         self.last_obs = None
@@ -155,121 +161,115 @@ class RLBenchEnv(BaseEnv):
         ee_rot6d = obs.gripper_matrix[:3, :2].flatten(order="F")
         gripper = np.array([obs.gripper_open])
         robot_state = np.concatenate([ee_position, ee_rot6d, gripper])
-        points, colors, pixels, cam_ids = self._filter_workspace_points(xyz_maps, rgb_maps)
-        return self._downsample_points(points, colors, pixels, cam_ids)
+        return robot_state
 
-    def _collect_camera_maps(self, obs: Observation) -> tuple[np.ndarray, np.ndarray]:
-        xyz_maps = np.stack(
-            [
+    def _collect_camera_maps(self, obs: Observation) -> tuple[torch.Tensor, torch.Tensor]:
+        xyz_maps = torch.stack([
             obs.right_shoulder_point_cloud,
             obs.left_shoulder_point_cloud,
             obs.overhead_point_cloud,
             obs.front_point_cloud,
             obs.wrist_point_cloud,
-            ],
-                axis=0,
-        )
-        rgb_maps = np.stack(
-            [
+        ], axis=0).to(self.device) # [N_cam, H, W, 3]
+        rgb_maps = torch.stack([
             obs.right_shoulder_rgb,
             obs.left_shoulder_rgb,
             obs.overhead_rgb,
             obs.front_rgb,
             obs.wrist_rgb,
-            ],
-            axis=0,
-        ).astype(np.float32) / 255.0
+        ], axis=0).to(self.device) # [N_cam, H, W, 3]
         return xyz_maps, rgb_maps
         
     def _filter_workspace_points(
         self,
-        xyz_maps: np.ndarray,
-        rgb_maps: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        num_maps, H, W, _ = xyz_maps.shape
-        points, colors, pixels, cam_ids = [], [], [], []
-        for m in range(num_maps):
-            flat_xyz = xyz_maps[m].reshape(-1, 3)
-            flat_rgb = rgb_maps[m].reshape(-1, 3)
-            inside_idx = self.ws_aabb.get_point_indices_within_bounding_box(
-                o3d.utility.Vector3dVector(flat_xyz)
-            )
-            if not inside_idx:
-                continue
-            mask = np.zeros(flat_xyz.shape[0], dtype=bool)
-            mask[inside_idx] = True
-            ii, jj = np.where(mask.reshape(H, W))
-            points.append(flat_xyz[inside_idx])
-            colors.append(flat_rgb[inside_idx])
-            pixels.append(np.stack([ii, jj], axis=1).astype(np.int32))
-            cam_ids.append(np.full(ii.shape, m))
-        if not points:
+        xyz_maps: torch.Tensor,
+        rgb_maps: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        N_cam, H, W, _ = xyz_maps.shape
+
+        # flatten xyz and rgb maps
+        flat_xyz = xyz_maps.reshape(N_cam, -1, 3)
+        flat_rgb = rgb_maps.reshape(N_cam, -1, 3)
+
+        # generate mask for workspace points
+        in_bound = (flat_xyz >= self.min_bound) & (flat_xyz <=self.max_bound)
+        mask = in_bound.all(dim=1)
+
+        if not mask.any():
             raise ValueError("No points inside the workspace")
-        return(
-            np.concatenate(points, axis=0),
-            np.concatenate(colors, axis=0),
-            np.concatenate(pixels, axis=0),
-            np.concatenate(cam_ids, axis=0),
+
+        # apply mask to xyz and rgb maps
+        points = flat_xyz[mask]
+        colors = flat_rgb[mask].float() / 255.0
+
+        # generate pixels indice and cam ids for points in mask
+        grid_y, grid_x = torch.meshgrid(
+            torch.arange(H, device=self.device),
+            torch.arange(W, device=self.device),
+            indexing="ij",
         )
+        # (H, W, 2)) -> (N_cam, H, W, 2) -> (-1, 2)
+        pixels_all = torch.stack([grid_y, grid_x], dim=-1).unsqueeze(0).expand(N_cam,-1, -1, -1).reshape(-1, 2)
+
+        # (N_cam, H, W) -> (-1,)
+        cam_ids_all = torch.arange(N_cam, device=self.device).view(-1, 1, 1).expand(-1, H, W).reshape(-1,)
+
+        # retrieve pixels and cam ids for points in mask
+        pixels = pixels_all[mask]
+        cam_ids = cam_ids_all[mask]
+        return points, colors, pixels, cam_ids
+
+
     def _downsample_with_indices(
         self,
-        points: np.ndarray,
-        colors: np.ndarray,
-        pixels: np.ndarray,
-        cam_ids: np.ndarray,
-    ) -> tuple[o3d.geometry.PointCloud, np.ndarray, np.ndarray]:
-        pcd_full = o3d.geometry.PointCloud()
-        pcd_full.points = o3d.utility.Vector3dVector(points)
-        pcd_full.colors = o3d.utility.Vector3dVector(colors)
-        pcd_voxel = pcd_full.voxel_down_sample(self.voxel_size)
-        pts_down = np.asarray(pcd_voxel.points)
-        if pts_down.shape[0] == 0:
-            pts_down = points
-            cols_down = colors
-            pix_down = pixels
-            cams_down = cam_ids
-        else:
-            nn_tree = cKDTree(points)
-            _, idx = nn_tree.query(pts_down, k=1)
-            cols_down = colors[idx]
-            pix_down = pixels[idx]
-            cams_down = cam_ids[idx]
-        if pts_down.shape[0] > self.n_points:
-            fps = o3d.geometry.PointCloud()
-            fps.points = o3d.utility.Vector3dVector(pts_down)
-            pts_target = np.asarray(fps.farthest_point_down_sample(self.n_points).points)
-            voxel_tree = cKDTree(pts_down)
-            _, idx = voxel_tree.query(pts_target, k=1)
-            pts_down, cols_down = pts_down[idx], cols_down[idx]
-            pix_down, cams_down = pix_down[idx], cams_down[idx]
-        elif pts_down.shape[0] < self.n_points:
-            diff = self.n_points - pts_down.shape[0]
-            repl = points.shape[0] < diff
-            extra = np.random.choice(points.shape[0], diff, replace=repl)
-            pts_down = np.concatenate([pts_down, points[extra]], axis=0)
-            cols_down = np.concatenate([cols_down, colors[extra]], axis=0)
-            pix_down = np.concatenate([pix_down, pixels[extra]], axis=0)
-            cams_down = np.concatenate([cams_down, cam_ids[extra]], axis=0)
-        final_pcd = o3d.geometry.PointCloud()
-        final_pcd.points = o3d.utility.Vector3dVector(pts_down)
-        final_pcd.colors = o3d.utility.Vector3dVector(cols_down)
-        return final_pcd, pix_down, cams_down
+        points: torch.Tensor,
+        colors: torch.Tensor,
+        pixels: torch.Tensor,
+        cam_ids: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        curr_n = points.shape[0] 
+
+        if curr_n > self.n_points:
+            # case 1: more than self.n_points
+            # add batch dim (1, N, 3)
+            points_batch = points.unsqueeze(0)
+
+            _, idx_batch = points_batch.sample_farthest_points(points_batch, K=self.n_points)
+            idx = idx_batch.squeeze(0)
+
+
+            # retrieve points and colors for sampled points
+            points = points[idx]
+            colors = colors[idx]
+            pixels = pixels[idx]
+            cam_ids = cam_ids[idx]
+        elif curr_n < self.n_points:
+            # case 2: less than self.n_points
+            diff = self.n_points - curr_n
+            # randomly sample extra points
+            extra = torch.randint(0, curr_n, (diff,), device=self.device)
+            points = torch.cat([points, points[extra]], dim=0)
+            colors = torch.cat([colors, colors[extra]], dim=0)
+            pixels = torch.cat([pixels, pixels[extra]], dim=0)
+            cam_ids = torch.cat([cam_ids, cam_ids[extra]], dim=0)
+        return points, colors, pixels, cam_ids
 
     def get_pcd(self, obs: Observation, save_pos: bool= False) -> o3d.geometry.PointCloud:
         # if save_pos return the u,v position and which camera image of point cloud.
-        if not save_pos:
-            cams = (
-                (obs.right_shoulder_point_cloud, obs.right_shoulder_rgb),
-                (obs.left_shoulder_point_cloud, obs.left_shoulder_rgb),
-                (obs.overhead_point_cloud, obs.overhead_rgb),
-                (obs.front_point_cloud, obs.front_rgb),
-                (obs.wrist_point_cloud, obs.wrist_rgb),
-            ) 
-            pcds = [make_pcd(pcd, rgb) for pcd, rgb in cams]
-            return merge_pcds(self.voxel_size, self.n_points, pcds, self.ws_aabb)
+
+        # collect point clouds from all cameras
         xyz_maps, rgb_maps = self._collect_camera_maps(obs)
-        points, colors, pixels, cam_ids = self._filter_workspace_points(xyz_maps, rgb_maps)
-        return self._downsample_with_indices(points, colors, pixels, cam_ids)
+
+        # filter workspace points
+        points, colors, pixels, cam_id = self._filter_workspace_points(xyz_maps, rgb_maps)
+
+        # downsample points
+        points, colors, pixels, cam_id = self._downsample_with_indices(points, colors, pixels, cam_id)
+
+        if save_pos:
+            return points, colors, pixels, cam_id
+        
+        return points, colors
 
     def get_images(self, obs: Observation) -> np.ndarray:
         images = np.stack(
