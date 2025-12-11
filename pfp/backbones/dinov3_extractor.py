@@ -1,16 +1,21 @@
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
-from pfp.common.upsample_anything import UPA
 
 class DINOExtractor:
-    def __init__(self, model_path, model_name, device='cuda', patch_size=16):
+    def __init__(
+        self, 
+        model_path: str = './ckpt/dinov3_vits16.pth',
+        model_name: str = 'dinov3_vits16',
+        device: str = 'cuda',
+        patch_size: int = 16
+    ):
         self.device = device
         self.patch_size = patch_size
         
         # 加载模型
         print(f"Loading DINO from {model_path}...")
-        self.model = torch.hub.load("./", model_name, source='local', weights=model_path)
+        self.model = torch.hub.load("../dinov3", model_name, source='local', weights=model_path)
         self.model.to(self.device)
         self.model.eval()
         
@@ -39,11 +44,8 @@ class DINOExtractor:
         # 1. 预处理图像 for DINO
         # DINO 需要 (B, C, H, W)，且需要 Normalize
         # 假设 rgb_maps 是 [0, 1] 的 float，如果是 uint8 需要先除 255
-        if rgb_maps.dtype == torch.uint8:
-            imgs = rgb_maps.float() / 255.0
-        else:
-            imgs = rgb_maps
-            
+
+        imgs = torch.from_numpy(rgb_maps).to(self.device, dtype=torch.float32) / 255.0
         imgs = imgs.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
         
         # 应用 Normalize
@@ -54,30 +56,30 @@ class DINOExtractor:
         # 通常 'x_norm_patchtokens' 是 patch 特征, 'x_norm_clstoken' 是 CLS
         output = self.model.forward_features(imgs)
         patch_feats = output["x_norm_patchtokens"] # (N_cam, N_patches, Embed_Dim)
-               # 3. 采样 (Point-to-Feature Alignment)
-        # 我们有 pixels (u, v) 在原图 H, W 坐标系
-        # 由于图像被 resize 了，需要将坐标按比例缩放
-        u = pixels[:, 1] # col
-        v = pixels[:, 0] # row
-        
-        # 归一化公式: 2 * (x / (W-1)) - 1
-        # 注意我们要映射到 feature map 的空间，但实际上直接用原图尺寸归一化即可，
-        # 因为 grid_sample 是相对坐标。
-        norm_x = 2.0 * (u / (W - 1)) - 1.0
-        norm_y = 2.0 * (v / (H - 1)) - 1.0
-        grid = torch.stack((norm_x, norm_y), dim=-1).unsqueeze(0).unsqueeze(0) # (1, 1, N_points, 2)
-        
-        # 这里的难点是：不同的点属于不同的 N_cam。
-        # grid_sample 标准用法是 (N, C, H, W) 配 (N, H_out, W_out, 2)。
-        # 我们的点是混合的。
+        # 3. 采样 (Point-to-Feature Alignment)
+        # 计算 feature map 的尺寸
         h_feat = H // self.patch_size
         w_feat = W // self.patch_size
-
-        feat_maps = patch_feats.transpose(1, 2).reshape(N_cam, -1, h_feat, w_feat)
         
-        hr_features = UPA(imgs, feat_maps)
-        # 这种 gather 操作在 PyTorch 中写法：
-        # 先把 maps 展平或者利用 fancy indexing
-        point_features = feature_maps[cam_ids, :, feat_y, feat_x] # (N_points, Dim)
+        # (N_cam, N_patches, Embed_Dim) -> (N_cam, Embed_Dim, h_feat, w_feat)
+        embed_dim = patch_feats.shape[-1]
+        feat_maps = patch_feats.reshape(N_cam, h_feat, w_feat, embed_dim).permute(0, 3, 1, 2)
+        
+        # 从 pixels 提取坐标
+        # pixels: (N_points, 2) - (v, u) / (row, col)
+        u = pixels[:, 1]  # col (x坐标)
+        v = pixels[:, 0]  # row (y坐标)
+        
+        # 将像素坐标转换为 feature map 坐标
+        # feature map 的每个位置对应 patch_size x patch_size 的像素区域
+        feat_x = (u / self.patch_size).long().clamp(min=0, max=w_feat - 1)
+        feat_y = (v / self.patch_size).long().clamp(min=0, max=h_feat - 1)
+        
+        # 使用 cam_ids 和计算出的坐标提取特征
+        # feat_maps: (N_cam, Embed_Dim, h_feat, w_feat)
+        # cam_ids: (N_points,)
+        # feat_y, feat_x: (N_points,)
+        # 使用 advanced indexing: feat_maps[cam_ids, :, feat_y, feat_x]
+        point_features = feat_maps[cam_ids, :, feat_y, feat_x]  # (N_points, Embed_Dim)
         
         return point_features

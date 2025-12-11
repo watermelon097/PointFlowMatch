@@ -44,7 +44,7 @@ def main(cfg: OmegaConf):
             # Extract images from 5 cameras: (5, 128, 128, 3)
             # [right_shoulder_rgb, left_shoulder_rgb, overhead_rgb, front_rgb, wrist_rgb]
             images = env.get_images(obs)
-            pcd, pixel_idx, map_idx = env.get_pcd_with_idx(obs)
+            pcd, pixel_idx, map_idx = env.get_pcd_with_idx(obs, save_pos=True)
             
             # Store data for this timestep
             data_history.append(

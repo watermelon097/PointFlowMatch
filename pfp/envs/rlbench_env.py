@@ -44,11 +44,12 @@ class RLBenchEnv(BaseEnv):
         use_pc_color: bool,
         headless: bool,
         vis: bool,
-        obs_mode: str = "pcd",
+        obs_mode: str = "pcd_with_idx",
         device: str = 'cuda'
     ):
-        assert obs_mode in ["pcd", "rgb"], "Invalid obs_mode"
+        assert obs_mode in ["pcd", "rgb", "pcd_with_idx"], "Invalid obs_mode"
         self.obs_mode = obs_mode
+        self.device = device
         # image_size=(128, 128)
         self.voxel_size = voxel_size
         self.n_points = n_points
@@ -86,8 +87,8 @@ class RLBenchEnv(BaseEnv):
                                       device=device, dtype=torch.float32)
         self.max_bound = torch.tensor([1, 0.65, 2], device=device, dtype=torch.float32)
         self.ws_aabb = o3d.geometry.AxisAlignedBoundingBox(
-            min_bound=self.min_bound,
-            max_bound=self.max_bound,
+            min_bound=self.min_bound.cpu().numpy().astype(np.float64),
+            max_bound=self.max_bound.cpu().numpy().astype(np.float64),
         )
         self.vis = vis #True use RerunViewer to visualize the environment, False: no visualization
         self.last_obs = None
@@ -165,18 +166,18 @@ class RLBenchEnv(BaseEnv):
 
     def _collect_camera_maps(self, obs: Observation) -> tuple[torch.Tensor, torch.Tensor]:
         xyz_maps = torch.stack([
-            obs.right_shoulder_point_cloud,
-            obs.left_shoulder_point_cloud,
-            obs.overhead_point_cloud,
-            obs.front_point_cloud,
-            obs.wrist_point_cloud,
+            torch.from_numpy(obs.right_shoulder_point_cloud),
+            torch.from_numpy(obs.left_shoulder_point_cloud),
+            torch.from_numpy(obs.overhead_point_cloud),
+            torch.from_numpy(obs.front_point_cloud),
+            torch.from_numpy(obs.wrist_point_cloud),
         ], axis=0).to(self.device) # [N_cam, H, W, 3]
         rgb_maps = torch.stack([
-            obs.right_shoulder_rgb,
-            obs.left_shoulder_rgb,
-            obs.overhead_rgb,
-            obs.front_rgb,
-            obs.wrist_rgb,
+            torch.from_numpy(obs.right_shoulder_rgb),
+            torch.from_numpy(obs.left_shoulder_rgb),
+            torch.from_numpy(obs.overhead_rgb),
+            torch.from_numpy(obs.front_rgb),
+            torch.from_numpy(obs.wrist_rgb),
         ], axis=0).to(self.device) # [N_cam, H, W, 3]
         return xyz_maps, rgb_maps
         
@@ -193,7 +194,7 @@ class RLBenchEnv(BaseEnv):
 
         # generate mask for workspace points
         in_bound = (flat_xyz >= self.min_bound) & (flat_xyz <=self.max_bound)
-        mask = in_bound.all(dim=1)
+        mask = in_bound.all(dim=-1)
 
         if not mask.any():
             raise ValueError("No points inside the workspace")
@@ -209,10 +210,10 @@ class RLBenchEnv(BaseEnv):
             indexing="ij",
         )
         # (H, W, 2)) -> (N_cam, H, W, 2) -> (-1, 2)
-        pixels_all = torch.stack([grid_y, grid_x], dim=-1).unsqueeze(0).expand(N_cam,-1, -1, -1).reshape(-1, 2)
+        pixels_all = torch.stack([grid_y, grid_x], dim=-1).unsqueeze(0).expand(N_cam,-1, -1, -1).reshape(N_cam, -1, 2)
 
         # (N_cam, H, W) -> (-1,)
-        cam_ids_all = torch.arange(N_cam, device=self.device).view(-1, 1, 1).expand(-1, H, W).reshape(-1,)
+        cam_ids_all = torch.arange(N_cam, device=self.device).view(-1, 1, 1).expand(-1, H, W).reshape(N_cam, -1)
 
         # retrieve pixels and cam ids for points in mask
         pixels = pixels_all[mask]
@@ -234,7 +235,7 @@ class RLBenchEnv(BaseEnv):
             # add batch dim (1, N, 3)
             points_batch = points.unsqueeze(0)
 
-            _, idx_batch = points_batch.sample_farthest_points(points_batch, K=self.n_points)
+            _, idx_batch = sample_farthest_points(points_batch, K=self.n_points)
             idx = idx_batch.squeeze(0)
 
 
@@ -320,7 +321,19 @@ class RLBenchEnv(BaseEnv):
             images = obs
             for i, img in enumerate(images):
                 RV.add_rgb(f"vis/rgb_obs_{i}", img)
-
+        
+        # If point maps are provided, visualize merged point cloud from them
+        elif self.obs_mode == "pcd_with_idx":
+            pcd, img, pixel_idx, map_idx = obs
+            # Vectorized color sampling from multi-view images
+            rows = pixel_idx[:, 0]
+            cols = pixel_idx[:, 1]
+            print(rows.shape, cols.shape, map_idx.shape)
+            pcd_color = img[map_idx, rows, cols].astype(np.uint8) # [N_points, 3], uint8 RGB
+           
+            RV.add_np_pointcloud("vis/pcd_obs", points=pcd, colors_uint8=pcd_color, radii=0.003)
+            for i, img in enumerate(img):
+                RV.add_rgb(f"vis/rgb_obs_{i}", img)
         # EE State
         ee_pose = pfp_to_pose_np(robot_state[np.newaxis, ...]).squeeze()
         RV.add_axis("vis/ee_state", ee_pose)
