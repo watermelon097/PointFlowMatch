@@ -148,9 +148,9 @@ class FMPolicy(ComposerModel, BasePolicy):
             batch = self._norm_data(batch)
             if self.augment_data:
                 batch = self._augment_data(batch)
-        pcd, robot_state_obs, robot_state_pred = batch
+        pcd, pixel_idx, map_idx, dino_feat, robot_state_obs, robot_state_pred = batch
         loss_xyz, loss_rot6d, loss_grip = self.calculate_loss(
-            pcd, robot_state_obs, robot_state_pred
+            pcd, pixel_idx, map_idx, dino_feat, robot_state_obs, robot_state_pred
         )
         loss = (
             self.l_w["xyz"] * loss_xyz
@@ -169,10 +169,14 @@ class FMPolicy(ComposerModel, BasePolicy):
     def calculate_loss(
         self,
         pcd: torch.Tensor,
+        pixel_idx: torch.Tensor,
+        map_idx: torch.Tensor,
+        dino_feat: torch.Tensor,
         robot_state_obs: torch.Tensor,
         robot_state_pred: torch.Tensor,
     ):
-        nx: torch.Tensor = self.obs_encoder(pcd, robot_state_obs)
+        nx: torch.Tensor = self.obs_encoder(pcd, pixel_idx, map_idx, dino_feat, robot_state_obs)
+
         ny: torch.Tensor = robot_state_pred
 
         B = ny.shape[0]

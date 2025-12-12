@@ -48,12 +48,19 @@ def main(cfg: OmegaConf):
             data_history.append(
                 {
                     "pcd_xyz": pcd_xyz_numpy,
+                    "pcd_color": colors_numpy,
+                    "map_idx": map_idx_numpy,
+                    "pixel_idx": pixel_idx_numpy,
                     "robot_state": robot_state.astype(np.float32),
                     "dinov3_features": dinov3_features_numpy,
                     "images": images,
                 }
             )
-            env.vis_step(robot_state, (pcd_xyz_numpy, images, pixel_idx_numpy, map_idx_numpy))
+            env.vis_step(robot_state, (
+                pcd_xyz_numpy, 
+                colors_numpy, 
+                images, 
+            ))
 
         if cfg.save_data:
             replay_buffer.add_episode_from_list(data_history, compressors="disk")

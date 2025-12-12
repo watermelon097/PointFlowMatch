@@ -324,13 +324,10 @@ class RLBenchEnv(BaseEnv):
         
         # If point maps are provided, visualize merged point cloud from them
         elif self.obs_mode == "pcd_with_idx":
-            pcd, img, pixel_idx, map_idx = obs
+            pcd, pcd_color, img = obs
             # Vectorized color sampling from multi-view images
-            rows = pixel_idx[:, 0]
-            cols = pixel_idx[:, 1]
-            print(rows.shape, cols.shape, map_idx.shape)
-            pcd_color = img[map_idx, rows, cols].astype(np.uint8) # [N_points, 3], uint8 RGB
-           
+
+
             RV.add_np_pointcloud("vis/pcd_obs", points=pcd, colors_uint8=pcd_color, radii=0.003)
             for i, img in enumerate(img):
                 RV.add_rgb(f"vis/rgb_obs_{i}", img)
